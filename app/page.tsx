@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import confetti from "canvas-confetti";
 import { 
   Share2, 
@@ -15,7 +15,9 @@ import {
   User, 
   Flame, 
   BarChart3, 
-  X 
+  X,
+  Volume2,
+  VolumeX
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
@@ -61,6 +63,122 @@ interface UserStats {
 
 const ROUND_TIME_SECONDS = 25;
 const GAME_EPOCH = new Date("2026-10-01T00:00:00Z").getTime();
+
+// --- SINTETIZADOR NATIVO (WEB AUDIO API) ---
+class SoundManager {
+  private ctx: AudioContext | null = null;
+  public enabled: boolean = true;
+
+  private initCtx() {
+    if (!this.ctx && typeof window !== "undefined") {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.ctx = new AudioCtx();
+    }
+    if (this.ctx && this.ctx.state === "suspended") {
+      this.ctx.resume();
+    }
+  }
+
+  playTick() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+
+    gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.04);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.04);
+  }
+
+  playSuccess() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    
+    // Tono 1
+    const osc1 = this.ctx.createOscillator();
+    const gain1 = this.ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(523.25, now); // C5
+    gain1.gain.setValueAtTime(0.08, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    osc1.connect(gain1);
+    gain1.connect(this.ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.18);
+
+    // Tono 2 más agudo
+    const osc2 = this.ctx.createOscillator();
+    const gain2 = this.ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(783.99, now + 0.08); // G5
+    gain2.gain.setValueAtTime(0.09, now + 0.08);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    osc2.connect(gain2);
+    gain2.connect(this.ctx.destination);
+    osc2.start(now + 0.08);
+    osc2.stop(now + 0.32);
+  }
+
+  playError() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.linearRampToValueAtTime(110, now + 0.18);
+
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.18);
+  }
+
+  playVictory() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const notes = [261.63, 329.63, 392.00, 523.25]; // Acorde mayor elegante
+    notes.forEach((freq, idx) => {
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime + idx * 0.08;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.7);
+    });
+  }
+}
+
+const sounds = new SoundManager();
 
 function getDayNumber(): number {
   const now = new Date();
@@ -178,17 +296,18 @@ export default function Home() {
   const [isDevSession, setIsDevSession] = useState(false);
   const [timeToNext, setTimeToNext] = useState<string>("");
   const [copied, setCopied] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const [results, setResults] = useState<GameResult[]>([]);
 
-  // Estados del Leaderboard
+  // Leaderboard states
   const [nicknameInput, setNicknameInput] = useState("");
   const [submittedNickname, setSubmittedNickname] = useState<string | null>(null);
   const [isSubmittingScore, setIsSubmittingScore] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
 
-  // Estados de Estadísticas y Racha
+  // Stats states
   const [stats, setStats] = useState<UserStats>({
     played: 0,
     currentStreak: 0,
@@ -236,6 +355,14 @@ export default function Home() {
       try {
         const today = getTodayKey();
         const dayIndex = getDayNumber();
+
+        // Cargar preferencia de sonido
+        const savedSound = localStorage.getItem("spezial_sound_enabled");
+        if (savedSound !== null) {
+          const val = savedSound === "true";
+          setSoundEnabled(val);
+          sounds.enabled = val;
+        }
 
         // Cargar nick habitual
         const rememberedNick = localStorage.getItem("spezial_saved_nickname");
@@ -286,6 +413,16 @@ export default function Home() {
     init();
   }, []);
 
+  const toggleSound = () => {
+    const nextVal = !soundEnabled;
+    setSoundEnabled(nextVal);
+    sounds.enabled = nextVal;
+    localStorage.setItem("spezial_sound_enabled", String(nextVal));
+    if (nextVal) {
+      sounds.playSuccess();
+    }
+  };
+
   useEffect(() => {
     setTimeToNext(getTimeUntilMidnight());
     const interval = setInterval(() => {
@@ -294,12 +431,19 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // Control del temporizador y tick de tensión
   useEffect(() => {
     if (gameState !== "playing") return;
 
     if (timeLeft === 0) {
+      sounds.playError();
       handleTimeout();
       return;
+    }
+
+    // Tick en los últimos 5 segundos
+    if (timeLeft <= 5 && timeLeft > 0) {
+      sounds.playTick();
     }
 
     const timer = setInterval(() => {
@@ -309,7 +453,6 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [gameState, timeLeft]);
 
-  // Actualizar historial y racha
   const updateStatsOnCompletion = (finalScore: number) => {
     const today = getTodayKey();
     const yesterday = getYesterdayKey();
@@ -357,6 +500,7 @@ export default function Home() {
     setResults([]);
     setFeedback(null);
     setInputVal("");
+    sounds.playTick();
   };
 
   const handleTimeout = () => {
@@ -386,6 +530,7 @@ export default function Home() {
     const match = findFuzzyMatch(inputVal, currentQ.valid_answers || []);
 
     if (match) {
+      sounds.playSuccess();
       setIsSubmitting(true);
       const canonical = normalize(match.text);
       let calculatedRarity = match.defaultRarity;
@@ -436,6 +581,7 @@ export default function Home() {
       setResults(newResults);
       advanceQuestion(newResults);
     } else {
+      sounds.playError();
       setFeedback("No figura en el registro oficial");
       setTimeout(() => setFeedback(null), 1600);
     }
@@ -464,6 +610,7 @@ export default function Home() {
         updateStatsOnCompletion(finalScore);
       }
       setGameState("summary");
+      sounds.playVictory();
       fetchLeaderboard();
       confetti({
         particleCount: 80,
@@ -497,6 +644,7 @@ export default function Home() {
 
       setSubmittedNickname(cleanNick);
       localStorage.setItem("spezial_saved_nickname", cleanNick);
+      sounds.playSuccess();
 
       if (!isDevSession) {
         const savedData = localStorage.getItem(`spezial_${today}`);
@@ -560,6 +708,15 @@ export default function Home() {
               <span>{stats.currentStreak}</span>
             </div>
           )}
+          {/* Botón de Sonido */}
+          <button
+            onClick={toggleSound}
+            className="p-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white transition"
+            title={soundEnabled ? "Silenciar audio" : "Activar audio"}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4 text-zinc-300" /> : <VolumeX className="w-4 h-4 text-zinc-600" />}
+          </button>
+          {/* Botón de Estadísticas */}
           <button
             onClick={() => setShowStatsModal(true)}
             className="p-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white transition"
