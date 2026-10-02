@@ -194,7 +194,7 @@ export default function Home() {
         const today = getTodayKey();
         const dayIndex = getDayNumber();
 
-        // 1. Cargar el nick habitual si ya lo usó anteriormente
+        // Cargar nick habitual si ya lo guardó antes
         const rememberedNick = localStorage.getItem("spezial_saved_nickname");
         if (rememberedNick) {
           setNicknameInput(rememberedNick);
@@ -413,7 +413,6 @@ export default function Home() {
       if (error) throw error;
 
       setSubmittedNickname(cleanNick);
-      // Guardar el alias permanentemente para que no tenga que escribirlo cada día
       localStorage.setItem("spezial_saved_nickname", cleanNick);
 
       if (!isDevSession) {
@@ -625,6 +624,7 @@ export default function Home() {
         {/* 3. RESUMEN Y LEADERBOARD */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Tarjeta de puntuación */}
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
                 <span className="uppercase tracking-widest">
@@ -650,15 +650,18 @@ export default function Home() {
             {/* SECCIÓN REGISTRO DE ALIAS CON AUTOCOMPLETADO */}
             {!submittedNickname ? (
               <div className="border border-zinc-900 rounded-xl p-5 bg-zinc-950/40 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 uppercase tracking-wider">
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Inscribir en el Leaderboard</span>
+                <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+                  <span className="flex items-center gap-2 uppercase tracking-wider">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Entrar al club
+                  </span>
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest">The Spezial Ones</span>
                 </div>
                 <form onSubmit={handleScoreSubmit} className="flex gap-2">
                   <input
                     type="text"
                     maxLength={12}
-                    placeholder="Tu alias (ej: NEO_99)"
+                    placeholder="Tu alias (ej: MOURINHO_04)"
                     value={nicknameInput}
                     onChange={(e) => setNicknameInput(e.target.value)}
                     className="flex-1 bg-zinc-900 border border-zinc-800 focus:border-zinc-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-600 font-mono uppercase"
@@ -668,7 +671,7 @@ export default function Home() {
                     disabled={isSubmittingScore || !nicknameInput.trim()}
                     className="px-4 py-2 bg-white hover:bg-zinc-200 text-black text-xs font-mono font-medium rounded-lg uppercase tracking-wider disabled:opacity-40 transition"
                   >
-                    {isSubmittingScore ? "..." : "Enviar"}
+                    {isSubmittingScore ? "..." : "Reclamar"}
                   </button>
                 </form>
               </div>
@@ -681,10 +684,13 @@ export default function Home() {
               </div>
             )}
 
-            {/* TABLA DEL TOP 10 DIARIO */}
+            {/* TABLA: THE SPEZIAL ONES */}
             <div className="space-y-3 border-t border-zinc-900 pt-5">
               <div className="flex justify-between items-center text-xs font-mono">
-                <span className="uppercase tracking-widest text-zinc-500">Top 10 de Hoy</span>
+                <div className="flex items-center gap-2">
+                  <span className="uppercase tracking-[0.2em] text-zinc-300 font-medium">The Spezial Ones</span>
+                  <span className="text-[10px] text-zinc-600">· HOY</span>
+                </div>
                 {isLoadingLeaderboard && (
                   <span className="text-[10px] text-zinc-600 animate-pulse">Actualizando...</span>
                 )}
@@ -693,10 +699,11 @@ export default function Home() {
               <div className="border border-zinc-900 rounded-xl overflow-hidden bg-zinc-950/30 divide-y divide-zinc-900/60 font-mono text-xs">
                 {leaderboard.length === 0 ? (
                   <p className="p-4 text-center text-zinc-600 text-[11px]">
-                    Sé el primero en entrar al ranking de hoy.
+                    Nadie ha reclamado su puesto todavía. Sé el primer Special One del día.
                   </p>
                 ) : (
                   leaderboard.map((entry, index) => {
+                    const isFirst = index === 0;
                     const isPodium = index < 3;
                     const isCurrentUser = submittedNickname && entry.nickname === submittedNickname;
                     return (
@@ -708,7 +715,7 @@ export default function Home() {
                       >
                         <div className="flex items-center gap-3">
                           <span className={`w-4 text-center font-semibold text-[11px] ${
-                            index === 0
+                            isFirst
                               ? "text-amber-400"
                               : index === 1
                               ? "text-zinc-300"
@@ -719,7 +726,7 @@ export default function Home() {
                             {index + 1}
                           </span>
                           <span className={`truncate max-w-[150px] ${isPodium ? "text-zinc-200" : ""}`}>
-                            {entry.nickname}
+                            {entry.nickname} {isFirst && <span className="text-[10px] text-amber-400/90 ml-1">✦</span>}
                           </span>
                         </div>
                         <span className="text-right text-zinc-300 font-semibold tabular-nums">
