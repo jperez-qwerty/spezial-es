@@ -2,7 +2,21 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check, Shuffle, Trophy, User } from "lucide-react";
+import { 
+  Share2, 
+  Sparkles, 
+  Clock, 
+  ArrowRight, 
+  CornerDownLeft, 
+  Loader2, 
+  Check, 
+  Shuffle, 
+  Trophy, 
+  User, 
+  Flame, 
+  BarChart3, 
+  X 
+} from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
@@ -36,6 +50,15 @@ interface LeaderboardEntry {
   created_at: string;
 }
 
+interface UserStats {
+  played: number;
+  currentStreak: number;
+  maxStreak: number;
+  bestScore: number;
+  totalScoreSum: number;
+  lastPlayedDate: string | null;
+}
+
 const ROUND_TIME_SECONDS = 25;
 const GAME_EPOCH = new Date("2026-10-01T00:00:00Z").getTime();
 
@@ -51,6 +74,15 @@ function getTodayKey(): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getYesterdayKey(): string {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const year = yesterday.getFullYear();
+  const month = String(yesterday.getMonth() + 1).padStart(2, "0");
+  const day = String(yesterday.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -149,12 +181,23 @@ export default function Home() {
 
   const [results, setResults] = useState<GameResult[]>([]);
 
-  // Leaderboard states
+  // Estados del Leaderboard
   const [nicknameInput, setNicknameInput] = useState("");
   const [submittedNickname, setSubmittedNickname] = useState<string | null>(null);
   const [isSubmittingScore, setIsSubmittingScore] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
+
+  // Estados de Estadísticas y Racha
+  const [stats, setStats] = useState<UserStats>({
+    played: 0,
+    currentStreak: 0,
+    maxStreak: 0,
+    bestScore: 0,
+    totalScoreSum: 0,
+    lastPlayedDate: null
+  });
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   const buildQuestionSet = (pool: Question[], dayIndex: number) => {
     const dailySelection: Question[] = [];
@@ -194,10 +237,20 @@ export default function Home() {
         const today = getTodayKey();
         const dayIndex = getDayNumber();
 
-        // Cargar nick habitual si ya lo guardó antes
+        // Cargar nick habitual
         const rememberedNick = localStorage.getItem("spezial_saved_nickname");
         if (rememberedNick) {
           setNicknameInput(rememberedNick);
+        }
+
+        // Cargar estadísticas
+        const savedStats = localStorage.getItem("spezial_user_stats");
+        if (savedStats) {
+          try {
+            setStats(JSON.parse(savedStats));
+          } catch (e) {
+            console.error("Error parseando stats", e);
+          }
         }
 
         const { data, error } = await supabase
@@ -255,6 +308,33 @@ export default function Home() {
 
     return () => clearInterval(timer);
   }, [gameState, timeLeft]);
+
+  // Actualizar historial y racha
+  const updateStatsOnCompletion = (finalScore: number) => {
+    const today = getTodayKey();
+    const yesterday = getYesterdayKey();
+
+    setStats((prev) => {
+      let newStreak = 1;
+      if (prev.lastPlayedDate === yesterday) {
+        newStreak = prev.currentStreak + 1;
+      } else if (prev.lastPlayedDate === today) {
+        newStreak = prev.currentStreak;
+      }
+
+      const updated: UserStats = {
+        played: prev.played + 1,
+        currentStreak: newStreak,
+        maxStreak: Math.max(prev.maxStreak, newStreak),
+        bestScore: Math.max(prev.bestScore, finalScore),
+        totalScoreSum: prev.totalScoreSum + finalScore,
+        lastPlayedDate: today
+      };
+
+      localStorage.setItem("spezial_user_stats", JSON.stringify(updated));
+      return updated;
+    });
+  };
 
   const shuffleQuestionsForTesting = () => {
     if (allQuestionsPool.length === 0) return;
@@ -368,6 +448,8 @@ export default function Home() {
       setCurrentIndex((prev) => prev + 1);
       setTimeLeft(ROUND_TIME_SECONDS);
     } else {
+      const finalScore = currentResultsList.reduce((acc, r) => acc + r.score, 0);
+
       if (!isDevSession) {
         const today = getTodayKey();
         localStorage.setItem(
@@ -379,6 +461,7 @@ export default function Home() {
           })
         );
         setAlreadyPlayedToday(true);
+        updateStatsOnCompletion(finalScore);
       }
       setGameState("summary");
       fetchLeaderboard();
@@ -446,6 +529,7 @@ export default function Home() {
     const today = getTodayKey();
     const shareText = `SPEZIAL · Embudo Diario (${today})\n` +
       `Puntuación de Singularidad: ${totalScore} pts\n` +
+      `Racha: ${stats.currentStreak} 🔥\n` +
       results
         .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫️") : "✕"))
         .join("") +
@@ -455,6 +539,8 @@ export default function Home() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const averageScore = stats.played > 0 ? Math.round(stats.totalScoreSum / stats.played) : 0;
 
   return (
     <main className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between selection:bg-zinc-800 selection:text-white px-4 py-8 antialiased font-sans">
@@ -467,10 +553,74 @@ export default function Home() {
             SPEZIAL {isDevSession && <span className="text-amber-400 text-[10px] tracking-normal">[TEST RUN]</span>}
           </span>
         </div>
-        <div className="font-mono text-xs text-zinc-500 tracking-wider">
-          {getTodayKey()}
+        <div className="flex items-center gap-3">
+          {stats.currentStreak > 0 && (
+            <div className="flex items-center gap-1 font-mono text-xs text-amber-400" title={`Racha de ${stats.currentStreak} días`}>
+              <Flame className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+              <span>{stats.currentStreak}</span>
+            </div>
+          )}
+          <button
+            onClick={() => setShowStatsModal(true)}
+            className="p-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white transition"
+            title="Estadísticas e Historial"
+          >
+            <BarChart3 className="w-4 h-4" />
+          </button>
         </div>
       </header>
+
+      {/* MODAL DE ESTADÍSTICAS */}
+      {showStatsModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl max-w-sm w-full p-6 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
+              <span className="font-mono text-xs uppercase tracking-[0.2em] text-zinc-400">
+                Estadísticas del Jugador
+              </span>
+              <button
+                onClick={() => setShowStatsModal(false)}
+                className="text-zinc-500 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-center font-mono">
+              <div className="border border-zinc-900 rounded-xl p-3.5 bg-zinc-900/40">
+                <span className="text-2xl font-light text-white">{stats.played}</span>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Partidas</p>
+              </div>
+              <div className="border border-zinc-900 rounded-xl p-3.5 bg-zinc-900/40">
+                <span className="text-2xl font-light text-amber-400 flex items-center justify-center gap-1">
+                  <Flame className="w-5 h-5 fill-amber-400" /> {stats.currentStreak}
+                </span>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Racha Actual</p>
+              </div>
+              <div className="border border-zinc-900 rounded-xl p-3.5 bg-zinc-900/40">
+                <span className="text-2xl font-light text-white">{stats.maxStreak}</span>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Racha Máxima</p>
+              </div>
+              <div className="border border-zinc-900 rounded-xl p-3.5 bg-zinc-900/40">
+                <span className="text-2xl font-light text-white">{stats.bestScore}</span>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Récord Pts</p>
+              </div>
+            </div>
+
+            <div className="border border-zinc-900 rounded-xl p-3.5 bg-zinc-900/40 flex justify-between items-center text-xs font-mono">
+              <span className="text-zinc-400 uppercase tracking-wider">Media de Singularidad:</span>
+              <span className="text-white font-medium">{averageScore} pts</span>
+            </div>
+
+            <button
+              onClick={() => setShowStatsModal(false)}
+              className="w-full py-2.5 bg-white text-black font-medium font-mono text-xs rounded-lg uppercase tracking-wider hover:bg-zinc-200 transition"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* CONTENEDOR CENTRAL */}
       <div className="w-full max-w-lg mx-auto my-auto py-8">
@@ -624,13 +774,21 @@ export default function Home() {
         {/* 3. RESUMEN Y LEADERBOARD */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Tarjeta de puntuación */}
+            {/* Tarjeta de puntuación con racha */}
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
                 <span className="uppercase tracking-widest">
                   {isDevSession ? "Partida de Prueba" : "Embudo Completado"}
                 </span>
-                <span className="text-zinc-400">{getTodayKey()}</span>
+                <div className="flex items-center gap-2">
+                  {stats.currentStreak > 0 && (
+                    <span className="text-amber-400 flex items-center gap-1 font-semibold">
+                      <Flame className="w-3.5 h-3.5 fill-amber-400" /> {stats.currentStreak} días
+                    </span>
+                  )}
+                  <span className="text-zinc-600">·</span>
+                  <span className="text-zinc-400">{getTodayKey()}</span>
+                </div>
               </div>
               <div className="flex items-baseline gap-2">
                 <span className="text-6xl font-light tracking-tighter text-white tabular-nums">
