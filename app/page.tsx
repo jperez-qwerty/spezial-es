@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Timer, Trophy, Share2, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
+import { Timer, Trophy, Share2, AlertCircle, Loader2, Clock, CheckCircle2 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
@@ -17,6 +17,36 @@ interface Question {
   valid_answers: AnswerOption[];
 }
 
+interface GameResult {
+  question: string;
+  answer: string;
+  canonicalAnswer: string;
+  rarity: number;
+  score: number;
+  success: boolean;
+}
+
+function getTodayKey(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTimeUntilMidnight(): string {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+
+  const diffMs = midnight.getTime() - now.getTime();
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function normalize(str: string): string {
   return str
     .trim()
@@ -27,14 +57,8 @@ function normalize(str: string): string {
 
 function levenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = [];
-
-  for (let i = 0; i <= b.length; i++) {
-    matrix[i] = [i];
-  }
-
-  for (let j = 0; j <= a.length; j++) {
-    matrix[0][j] = j;
-  }
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
 
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
@@ -49,7 +73,6 @@ function levenshteinDistance(a: string, b: string): number {
       }
     }
   }
-
   return matrix[b.length][a.length];
 }
 
@@ -90,21 +113,14 @@ export default function Home() {
   const [inputVal, setInputVal] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [alreadyPlayedToday, setAlreadyPlayedToday] = useState(false);
+  const [timeToNext, setTimeToNext] = useState<string>("");
 
-  const [results, setResults] = useState<
-    Array<{
-      question: string;
-      answer: string;
-      canonicalAnswer: string;
-      rarity: number;
-      score: number;
-      success: boolean;
-    }>
-  >([]);
+  const [results, setResults] = useState<GameResult[]>([]);
 
-  // 1. Cargar preguntas directamente desde Supabase al inicio
+  // 1. Cargar preguntas de Supabase y verificar estado diario en localStorage
   useEffect(() => {
-    async function fetchQuestions() {
+    async function init() {
       try {
         const { data, error } = await supabase
           .from("questions")
@@ -115,17 +131,37 @@ export default function Home() {
         if (data && data.length > 0) {
           setQuestions(data as Question[]);
         }
+
+        // Revisar si ya completó el reto de hoy
+        const today = getTodayKey();
+        const savedData = localStorage.getItem(`krillion_${today}`);
+
+        if (savedData) {
+          const parsed = JSON.parse(savedData);
+          setResults(parsed.results || []);
+          setAlreadyPlayedToday(true);
+          setGameState("summary");
+        }
       } catch (err) {
-        console.error("Error al cargar preguntas de Supabase:", err);
+        console.error("Error al inicializar:", err);
       } finally {
         setIsLoadingQuestions(false);
       }
     }
 
-    fetchQuestions();
+    init();
   }, []);
 
-  // 2. Temporizador
+  // 2. Reloj cuenta atrás para la siguiente medianoche
+  useEffect(() => {
+    setTimeToNext(getTimeUntilMidnight());
+    const interval = setInterval(() => {
+      setTimeToNext(getTimeUntilMidnight());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // 3. Temporizador de 15 segundos por pregunta
   useEffect(() => {
     if (gameState !== "playing") return;
 
@@ -142,7 +178,7 @@ export default function Home() {
   }, [gameState, timeLeft]);
 
   const startGame = () => {
-    if (questions.length === 0) return;
+    if (questions.length === 0 || alreadyPlayedToday) return;
     setGameState("playing");
     setCurrentIndex(0);
     setTimeLeft(15);
@@ -153,8 +189,8 @@ export default function Home() {
 
   const handleTimeout = () => {
     const currentQ = questions[currentIndex];
-    setResults((prev) => [
-      ...prev,
+    const newResults: GameResult[] = [
+      ...results,
       {
         question: currentQ.prompt,
         answer: "Tiempo agotado",
@@ -163,8 +199,9 @@ export default function Home() {
         score: 0,
         success: false
       }
-    ]);
-    advanceQuestion();
+    ];
+    setResults(newResults);
+    advanceQuestion(newResults);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -209,8 +246,8 @@ export default function Home() {
       }
 
       const points = 100 - calculatedRarity;
-      setResults((prev) => [
-        ...prev,
+      const newResults: GameResult[] = [
+        ...results,
         {
           question: currentQ.prompt,
           answer: inputVal,
@@ -219,30 +256,52 @@ export default function Home() {
           score: points,
           success: true
         }
-      ]);
-      advanceQuestion();
+      ];
+      setResults(newResults);
+      advanceQuestion(newResults);
     } else {
       setFeedback("Respuesta no válida para esta categoría");
       setTimeout(() => setFeedback(null), 1800);
     }
   };
 
-  const advanceQuestion = () => {
+  const advanceQuestion = (currentResultsList: GameResult[]) => {
     setInputVal("");
     setFeedback(null);
     if (currentIndex + 1 < questions.length) {
       setCurrentIndex((prev) => prev + 1);
       setTimeLeft(15);
     } else {
+      // Fin del juego diario: guardar en localStorage
+      const today = getTodayKey();
+      localStorage.setItem(
+        `krillion_${today}`,
+        JSON.stringify({
+          date: today,
+          results: currentResultsList,
+          completedAt: new Date().toISOString()
+        })
+      );
+      setAlreadyPlayedToday(true);
       setGameState("summary");
       confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
     }
   };
 
+  // Botón útil solo para desarrolladores (borrar partida diaria para probar de nuevo)
+  const resetDailyProgressForDev = () => {
+    const today = getTodayKey();
+    localStorage.removeItem(`krillion_${today}`);
+    setAlreadyPlayedToday(false);
+    setResults([]);
+    setGameState("intro");
+  };
+
   const totalScore = results.reduce((acc, r) => acc + r.score, 0);
 
   const copyShareText = () => {
-    const shareText = `🌊 Krillion Español - Reto Diario\n` +
+    const today = getTodayKey();
+    const shareText = `🌊 Spezial / Krillion Diario (${today})\n` +
       `Puntuación total: ${totalScore} pts\n` +
       results
         .map((r) => (r.success ? (r.rarity < 20 ? "🪸" : "🐟") : "❌"))
@@ -250,7 +309,7 @@ export default function Home() {
       `\n\nJuega aquí: https://spezial-es.vercel.app`;
 
     navigator.clipboard.writeText(shareText);
-    alert("¡Resultado copiado al portapapeles!");
+    alert("¡Resultado diario copiado al portapapeles!");
   };
 
   return (
@@ -261,7 +320,7 @@ export default function Home() {
         {isLoadingQuestions && (
           <div className="text-center py-12 space-y-4">
             <Loader2 className="w-8 h-8 text-teal-400 animate-spin mx-auto" />
-            <p className="text-slate-400 text-sm">Cargando preguntas de la base de datos...</p>
+            <p className="text-slate-400 text-sm">Preparando reto diario...</p>
           </div>
         )}
 
@@ -276,20 +335,22 @@ export default function Home() {
                 Krillion Español
               </h1>
               <p className="text-slate-400 mt-2 text-sm leading-relaxed">
-                El objetivo no es solo acertar, sino dar la respuesta correcta <b>más rara</b> según la comunidad.
+                El reto diario donde las respuestas más raras según la comunidad otorgan la mayor puntuación.
               </p>
             </div>
+
             <div className="bg-slate-800/50 p-4 rounded-xl text-left text-xs text-slate-300 space-y-2 border border-slate-800">
+              <p>📅 <b>1 intento al día</b> con las mismas preguntas para todos.</p>
               <p>⏱️ <b>15 segundos</b> por pregunta.</p>
-              <p>🪸 Respuestas raras otorgan mayor puntuación.</p>
-              <p>✨ Preguntas dinámicas sincronizadas en tiempo real.</p>
+              <p>🪸 Cuanto menos gente haya dicho tu respuesta, más puntos sumas.</p>
             </div>
+
             <button
               onClick={startGame}
               disabled={questions.length === 0}
               className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 disabled:opacity-50"
             >
-              Comenzar Inmersión
+              Comenzar Reto Diario
             </button>
           </div>
         )}
@@ -298,7 +359,7 @@ export default function Home() {
         {!isLoadingQuestions && gameState === "playing" && questions.length > 0 && (
           <div className="space-y-6">
             <div className="flex justify-between items-center text-sm font-medium">
-              <span className="text-teal-400">
+              <span className="text-teal-400 font-semibold">
                 Pregunta {currentIndex + 1} de {questions.length}
               </span>
               <div className="flex items-center gap-1.5 text-amber-400 font-mono text-base">
@@ -353,13 +414,27 @@ export default function Home() {
           </div>
         )}
 
-        {/* PANTALLA 3: RESULTADOS */}
+        {/* PANTALLA 3: RESULTADOS DIARIOS CON CONTADOR */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="text-center space-y-6">
-            <h2 className="text-2xl font-bold text-teal-400">Inmersión Completada</h2>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/20">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Reto diario completado
+            </div>
+
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-              <span className="text-xs text-slate-400 uppercase tracking-wide">Puntuación Total</span>
+              <span className="text-xs text-slate-400 uppercase tracking-wide">Puntuación Final</span>
               <p className="text-4xl font-black text-white mt-1">{totalScore} <span className="text-base font-normal text-slate-400">pts</span></p>
+            </div>
+
+            {/* Cuenta atrás hasta la medianoche */}
+            <div className="bg-slate-800/40 p-3.5 rounded-xl border border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Clock className="w-4 h-4 text-teal-400" />
+                <span>Siguiente reto en:</span>
+              </div>
+              <span className="font-mono text-base font-bold text-teal-400 tracking-wider">
+                {timeToNext}
+              </span>
             </div>
 
             <div className="space-y-2 text-left">
@@ -393,20 +468,21 @@ export default function Home() {
               ))}
             </div>
 
-            <div className="flex gap-3">
+            <button
+              onClick={copyShareText}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 shadow-lg shadow-teal-500/20"
+            >
+              <Share2 className="w-4 h-4" />
+              Compartir Resultado Diario
+            </button>
+
+            {/* Enlace para resetear durante pruebas */}
+            <div className="pt-2">
               <button
-                onClick={copyShareText}
-                className="flex-1 flex items-center justify-center gap-2 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200"
+                onClick={resetDailyProgressForDev}
+                className="text-[11px] text-slate-500 hover:text-slate-400 underline transition"
               >
-                <Share2 className="w-4 h-4" />
-                Compartir
-              </button>
-              <button
-                onClick={startGame}
-                className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition duration-200"
-                title="Jugar de nuevo"
-              >
-                <RefreshCw className="w-5 h-5" />
+                [Modo Dev] Reiniciar reto de hoy para probar
               </button>
             </div>
           </div>
