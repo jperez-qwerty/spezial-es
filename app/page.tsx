@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
 import { 
   Share2, 
@@ -106,11 +106,10 @@ class SoundManager {
 
     const now = this.ctx.currentTime;
     
-    // Tono 1
     const osc1 = this.ctx.createOscillator();
     const gain1 = this.ctx.createGain();
     osc1.type = "sine";
-    osc1.frequency.setValueAtTime(523.25, now); // C5
+    osc1.frequency.setValueAtTime(523.25, now);
     gain1.gain.setValueAtTime(0.08, now);
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
     osc1.connect(gain1);
@@ -118,11 +117,10 @@ class SoundManager {
     osc1.start(now);
     osc1.stop(now + 0.18);
 
-    // Tono 2 más agudo
     const osc2 = this.ctx.createOscillator();
     const gain2 = this.ctx.createGain();
     osc2.type = "sine";
-    osc2.frequency.setValueAtTime(783.99, now + 0.08); // G5
+    osc2.frequency.setValueAtTime(783.99, now + 0.08);
     gain2.gain.setValueAtTime(0.09, now + 0.08);
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
     osc2.connect(gain2);
@@ -158,7 +156,7 @@ class SoundManager {
     this.initCtx();
     if (!this.ctx) return;
 
-    const notes = [261.63, 329.63, 392.00, 523.25]; // Acorde mayor elegante
+    const notes = [261.63, 329.63, 392.00, 523.25];
     notes.forEach((freq, idx) => {
       if (!this.ctx) return;
       const now = this.ctx.currentTime + idx * 0.08;
@@ -431,7 +429,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // Control del temporizador y tick de tensión
   useEffect(() => {
     if (gameState !== "playing") return;
 
@@ -441,7 +438,6 @@ export default function Home() {
       return;
     }
 
-    // Tick en los últimos 5 segundos
     if (timeLeft <= 5 && timeLeft > 0) {
       sounds.playTick();
     }
@@ -679,7 +675,7 @@ export default function Home() {
       `Puntuación de Singularidad: ${totalScore} pts\n` +
       `Racha: ${stats.currentStreak} 🔥\n` +
       results
-        .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫️") : "✕"))
+        .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫️️") : "✕"))
         .join("") +
       `\n\n¿Eres capaz de llegar al Abismo?: https://spezial-es.vercel.app`;
 
@@ -693,30 +689,41 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between selection:bg-zinc-800 selection:text-white px-4 py-8 antialiased font-sans">
       
-      {/* HEADER */}
+      {/* HEADER: OPCIÓN A (Sonido a la izquierda con la marca, Estadísticas agrupadas a la derecha) */}
       <header className="w-full max-w-lg mx-auto flex items-center justify-between border-b border-zinc-900 pb-4">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-          <span className="font-mono text-xs uppercase tracking-[0.25em] text-zinc-400">
-            SPEZIAL {isDevSession && <span className="text-amber-400 text-[10px] tracking-normal">[TEST RUN]</span>}
-          </span>
-        </div>
+        {/* Lado izquierdo: Marca + botón de sonido */}
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span className="font-mono text-xs uppercase tracking-[0.25em] text-zinc-400">
+              SPEZIAL {isDevSession && <span className="text-amber-400 text-[10px] tracking-normal">[TEST RUN]</span>}
+            </span>
+          </div>
+
+          <span className="h-3 w-px bg-zinc-800" />
+
+          {/* Control de sonido colocado discretamente junto a la marca */}
+          <button
+            onClick={toggleSound}
+            className="p-1 rounded-md border border-zinc-800/80 hover:border-zinc-700 text-zinc-400 hover:text-white transition"
+            title={soundEnabled ? "Silenciar audio" : "Activar audio"}
+          >
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-zinc-300" /> : <VolumeX className="w-3.5 h-3.5 text-zinc-600" />}
+          </button>
+        </div>
+
+        {/* Lado derecho: Estadísticas del jugador exclusivamente */}
+        <div className="flex items-center gap-2">
           {stats.currentStreak > 0 && (
-            <div className="flex items-center gap-1 font-mono text-xs text-amber-400" title={`Racha de ${stats.currentStreak} días`}>
+            <div 
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 font-mono text-xs text-amber-400" 
+              title={`Racha de ${stats.currentStreak} días`}
+            >
               <Flame className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
               <span>{stats.currentStreak}</span>
             </div>
           )}
-          {/* Botón de Sonido */}
-          <button
-            onClick={toggleSound}
-            className="p-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white transition"
-            title={soundEnabled ? "Silenciar audio" : "Activar audio"}
-          >
-            {soundEnabled ? <Volume2 className="w-4 h-4 text-zinc-300" /> : <VolumeX className="w-4 h-4 text-zinc-600" />}
-          </button>
-          {/* Botón de Estadísticas */}
+
           <button
             onClick={() => setShowStatsModal(true)}
             className="p-1.5 rounded-md border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white transition"
