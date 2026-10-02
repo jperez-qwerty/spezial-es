@@ -149,7 +149,7 @@ export default function Home() {
 
   const [results, setResults] = useState<GameResult[]>([]);
 
-  // Estados del Leaderboard
+  // Leaderboard states
   const [nicknameInput, setNicknameInput] = useState("");
   const [submittedNickname, setSubmittedNickname] = useState<string | null>(null);
   const [isSubmittingScore, setIsSubmittingScore] = useState(false);
@@ -193,6 +193,12 @@ export default function Home() {
       try {
         const today = getTodayKey();
         const dayIndex = getDayNumber();
+
+        // 1. Cargar el nick habitual si ya lo usó anteriormente
+        const rememberedNick = localStorage.getItem("spezial_saved_nickname");
+        if (rememberedNick) {
+          setNicknameInput(rememberedNick);
+        }
 
         const { data, error } = await supabase
           .from("questions")
@@ -387,7 +393,6 @@ export default function Home() {
 
   const totalScore = results.reduce((acc, r) => acc + r.score, 0);
 
-  // Enviar puntuación al leaderboard
   const handleScoreSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanNick = nicknameInput.trim().slice(0, 12);
@@ -408,7 +413,9 @@ export default function Home() {
       if (error) throw error;
 
       setSubmittedNickname(cleanNick);
-      // Persistir que ya envió su alias hoy
+      // Guardar el alias permanentemente para que no tenga que escribirlo cada día
+      localStorage.setItem("spezial_saved_nickname", cleanNick);
+
       if (!isDevSession) {
         const savedData = localStorage.getItem(`spezial_${today}`);
         if (savedData) {
@@ -618,7 +625,6 @@ export default function Home() {
         {/* 3. RESUMEN Y LEADERBOARD */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Tarjeta de puntuación */}
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
                 <span className="uppercase tracking-widest">
@@ -641,7 +647,7 @@ export default function Home() {
               </p>
             </div>
 
-            {/* SECCIÓN REGISTRO DE ALIAS EN EL RANKING */}
+            {/* SECCIÓN REGISTRO DE ALIAS CON AUTOCOMPLETADO */}
             {!submittedNickname ? (
               <div className="border border-zinc-900 rounded-xl p-5 bg-zinc-950/40 space-y-3">
                 <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 uppercase tracking-wider">
@@ -726,7 +732,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Desglose de cada fase */}
+            {/* Desglose */}
             <div className="space-y-2 border-t border-zinc-900 pt-4">
               <p className="font-mono text-[11px] uppercase tracking-widest text-zinc-500 mb-3">
                 Desglose de tus respuestas
