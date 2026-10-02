@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Timer, Trophy, Share2, AlertCircle, Loader2, Clock, CheckCircle2 } from "lucide-react";
+import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
@@ -14,16 +14,19 @@ interface Question {
   id: number;
   prompt: string;
   category: string;
+  difficulty: number;
   valid_answers: AnswerOption[];
 }
 
 interface GameResult {
   question: string;
+  category: string;
   answer: string;
   canonicalAnswer: string;
   rarity: number;
   score: number;
   success: boolean;
+  difficulty: number;
 }
 
 function getTodayKey(): string {
@@ -32,6 +35,16 @@ function getTodayKey(): string {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+// Genera un número entero a partir de un string de fecha (semilla)
+function getSeedFromDate(dateStr: string): number {
+  let hash = 0;
+  for (let i = 0; i < dateStr.length; i++) {
+    hash = (hash << 5) - hash + dateStr.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
 
 function getTimeUntilMidnight(): string {
@@ -104,6 +117,14 @@ function findFuzzyMatch(userInput: string, validAnswers: AnswerOption[]): Answer
   return bestMatch;
 }
 
+const DIFFICULTY_LABELS: Record<number, string> = {
+  1: "Ronda 1 · Océano",
+  2: "Ronda 2 · Enfoque",
+  3: "Ronda 3 · Filtro",
+  4: "Ronda 4 · Estrecho",
+  5: "Ronda 5 · Abismo",
+};
+
 export default function Home() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
@@ -115,27 +136,40 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alreadyPlayedToday, setAlreadyPlayedToday] = useState(false);
   const [timeToNext, setTimeToNext] = useState<string>("");
+  const [copied, setCopied] = useState(false);
 
   const [results, setResults] = useState<GameResult[]>([]);
 
-  // 1. Cargar preguntas de Supabase y verificar estado diario en localStorage
   useEffect(() => {
     async function init() {
       try {
+        const today = getTodayKey();
+        const seed = getSeedFromDate(today);
+
+        // Traemos toda la pool
         const { data, error } = await supabase
           .from("questions")
-          .select("id, prompt, category, valid_answers")
-          .order("id", { ascending: true });
+          .select("id, prompt, category, difficulty, valid_answers");
 
         if (error) throw error;
+
         if (data && data.length > 0) {
-          setQuestions(data as Question[]);
+          const allQuestions = data as Question[];
+          
+          // Seleccionamos deterministamente exactamente 1 de cada dificultad (1 a 5)
+          const dailySelection: Question[] = [];
+          for (let d = 1; d <= 5; d++) {
+            const poolForDiff = allQuestions.filter((q) => q.difficulty === d);
+            if (poolForDiff.length > 0) {
+              const selectedIndex = (seed + d) % poolForDiff.length;
+              dailySelection.push(poolForDiff[selectedIndex]);
+            }
+          }
+
+          setQuestions(dailySelection);
         }
 
-        // Revisar si ya completó el reto de hoy
-        const today = getTodayKey();
-        const savedData = localStorage.getItem(`krillion_${today}`);
-
+        const savedData = localStorage.getItem(`spezial_${today}`);
         if (savedData) {
           const parsed = JSON.parse(savedData);
           setResults(parsed.results || []);
@@ -152,7 +186,6 @@ export default function Home() {
     init();
   }, []);
 
-  // 2. Reloj cuenta atrás para la siguiente medianoche
   useEffect(() => {
     setTimeToNext(getTimeUntilMidnight());
     const interval = setInterval(() => {
@@ -161,7 +194,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // 3. Temporizador de 15 segundos por pregunta
   useEffect(() => {
     if (gameState !== "playing") return;
 
@@ -193,7 +225,9 @@ export default function Home() {
       ...results,
       {
         question: currentQ.prompt,
-        answer: "Tiempo agotado",
+        category: currentQ.category,
+        difficulty: currentQ.difficulty,
+        answer: "Sin tiempo",
         canonicalAnswer: "-",
         rarity: 100,
         score: 0,
@@ -250,6 +284,8 @@ export default function Home() {
         ...results,
         {
           question: currentQ.prompt,
+          category: currentQ.category,
+          difficulty: currentQ.difficulty,
           answer: inputVal,
           canonicalAnswer: match.text,
           rarity: calculatedRarity,
@@ -260,8 +296,8 @@ export default function Home() {
       setResults(newResults);
       advanceQuestion(newResults);
     } else {
-      setFeedback("Respuesta no válida para esta categoría");
-      setTimeout(() => setFeedback(null), 1800);
+      setFeedback("No figura en el registro oficial");
+      setTimeout(() => setFeedback(null), 1600);
     }
   };
 
@@ -272,10 +308,9 @@ export default function Home() {
       setCurrentIndex((prev) => prev + 1);
       setTimeLeft(15);
     } else {
-      // Fin del juego diario: guardar en localStorage
       const today = getTodayKey();
       localStorage.setItem(
-        `krillion_${today}`,
+        `spezial_${today}`,
         JSON.stringify({
           date: today,
           results: currentResultsList,
@@ -284,14 +319,18 @@ export default function Home() {
       );
       setAlreadyPlayedToday(true);
       setGameState("summary");
-      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: ["#ffffff", "#d4d4d8", "#e4e4e7"]
+      });
     }
   };
 
-  // Botón útil solo para desarrolladores (borrar partida diaria para probar de nuevo)
   const resetDailyProgressForDev = () => {
     const today = getTodayKey();
-    localStorage.removeItem(`krillion_${today}`);
+    localStorage.removeItem(`spezial_${today}`);
     setAlreadyPlayedToday(false);
     setResults([]);
     setGameState("intro");
@@ -301,194 +340,269 @@ export default function Home() {
 
   const copyShareText = () => {
     const today = getTodayKey();
-    const shareText = `🌊 Spezial / Krillion Diario (${today})\n` +
-      `Puntuación total: ${totalScore} pts\n` +
+    const shareText = `SPEZIAL · Embudo Diario (${today})\n` +
+      `Puntuación de Singularidad: ${totalScore} pts\n` +
       results
-        .map((r) => (r.success ? (r.rarity < 20 ? "🪸" : "🐟") : "❌"))
+        .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫️") : "✕"))
         .join("") +
-      `\n\nJuega aquí: https://spezial-es.vercel.app`;
+      `\n\n¿Eres capaz de llegar al Abismo?: https://spezial-es.vercel.app`;
 
     navigator.clipboard.writeText(shareText);
-    alert("¡Resultado diario copiado al portapapeles!");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
-      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+    <main className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between selection:bg-zinc-800 selection:text-white px-4 py-8 antialiased font-sans">
+      
+      {/* HEADER */}
+      <header className="w-full max-w-lg mx-auto flex items-center justify-between border-b border-zinc-900 pb-4">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          <span className="font-mono text-xs uppercase tracking-[0.25em] text-zinc-400">
+            SPEZIAL
+          </span>
+        </div>
+        <div className="font-mono text-xs text-zinc-500 tracking-wider">
+          {getTodayKey()}
+        </div>
+      </header>
+
+      {/* CONTENEDOR CENTRAL */}
+      <div className="w-full max-w-lg mx-auto my-auto py-8">
         
-        {/* PANTALLA DE CARGA */}
+        {/* CARGANDO */}
         {isLoadingQuestions && (
-          <div className="text-center py-12 space-y-4">
-            <Loader2 className="w-8 h-8 text-teal-400 animate-spin mx-auto" />
-            <p className="text-slate-400 text-sm">Preparando reto diario...</p>
+          <div className="flex flex-col items-center justify-center py-20 space-y-4">
+            <Loader2 className="w-5 h-5 text-zinc-500 animate-spin" />
+            <span className="font-mono text-xs text-zinc-500 tracking-widest uppercase">
+              Configurando el embudo diario
+            </span>
           </div>
         )}
 
-        {/* PANTALLA 1: INTRO */}
+        {/* 1. INTRO */}
         {!isLoadingQuestions && gameState === "intro" && (
-          <div className="text-center space-y-6">
-            <div className="inline-block p-4 bg-teal-500/10 rounded-full text-teal-400">
-              <Trophy className="w-12 h-12" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-teal-400">
-                Krillion Español
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="space-y-3">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-zinc-800 bg-zinc-900/60 font-mono text-[11px] text-zinc-400 uppercase tracking-wider">
+                <Sparkles className="w-3 h-3 text-zinc-300" /> Curva de Contracción
+              </span>
+              <h1 className="text-4xl sm:text-5xl font-light tracking-tight text-white">
+                5 Rondas. <br />
+                <span className="font-serif italic font-normal text-zinc-400">Cada vez más estrecho.</span>
               </h1>
-              <p className="text-slate-400 mt-2 text-sm leading-relaxed">
-                El reto diario donde las respuestas más raras según la comunidad otorgan la mayor puntuación.
+              <p className="text-zinc-400 text-sm leading-relaxed max-w-md pt-2">
+                Empiezas en un océano de respuestas posibles donde debes evitar lo evidente, y terminas en un abismo de solo un puñado de opciones válidas.
               </p>
             </div>
 
-            <div className="bg-slate-800/50 p-4 rounded-xl text-left text-xs text-slate-300 space-y-2 border border-slate-800">
-              <p>📅 <b>1 intento al día</b> con las mismas preguntas para todos.</p>
-              <p>⏱️ <b>15 segundos</b> por pregunta.</p>
-              <p>🪸 Cuanto menos gente haya dicho tu respuesta, más puntos sumas.</p>
+            {/* Estructura del embudo */}
+            <div className="border border-zinc-900 rounded-xl p-4 bg-zinc-950/40 space-y-2.5 font-mono text-xs">
+              <div className="flex justify-between items-center text-zinc-400">
+                <span>Ronda 1 · Océano</span>
+                <span className="text-zinc-500">Cientos de opciones</span>
+              </div>
+              <div className="flex justify-between items-center text-zinc-400">
+                <span>Ronda 2-3 · Enfoque</span>
+                <span className="text-zinc-500">~30-50 opciones</span>
+              </div>
+              <div className="flex justify-between items-center text-zinc-300 font-medium">
+                <span>Ronda 5 · Abismo</span>
+                <span className="text-amber-400/90">&lt; 10 opciones</span>
+              </div>
             </div>
 
             <button
               onClick={startGame}
               disabled={questions.length === 0}
-              className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 disabled:opacity-50"
+              className="w-full group flex items-center justify-between px-6 py-4 bg-white hover:bg-zinc-200 text-black font-medium text-sm rounded-lg transition duration-200 disabled:opacity-50"
             >
-              Comenzar Reto Diario
+              <span>Comenzar Inmersión</span>
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </button>
           </div>
         )}
 
-        {/* PANTALLA 2: JUEGO ACTIVO */}
+        {/* 2. JUEGO ACTIVO */}
         {!isLoadingQuestions && gameState === "playing" && questions.length > 0 && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center text-sm font-medium">
-              <span className="text-teal-400 font-semibold">
-                Pregunta {currentIndex + 1} de {questions.length}
-              </span>
-              <div className="flex items-center gap-1.5 text-amber-400 font-mono text-base">
-                <Timer className="w-5 h-5 animate-pulse" />
-                <span>{timeLeft}s</span>
+          <div className="space-y-8 animate-in fade-in duration-300">
+            {/* Cabecera del turno */}
+            <div className="flex justify-between items-end border-b border-zinc-900 pb-3">
+              <div>
+                <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
+                  {DIFFICULTY_LABELS[questions[currentIndex].difficulty]}
+                </span>
+                <p className="text-xs text-zinc-300 font-medium">
+                  {questions[currentIndex].category}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-zinc-500">
+                  {currentIndex + 1} / {questions.length}
+                </span>
+                <span className={`font-mono text-sm font-semibold tabular-nums px-2 py-0.5 rounded border ${
+                  timeLeft <= 5 
+                    ? "border-red-900/60 bg-red-950/30 text-red-400 animate-pulse" 
+                    : "border-zinc-800 bg-zinc-900/60 text-zinc-300"
+                }`}>
+                  {timeLeft}s
+                </span>
               </div>
             </div>
 
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-1000 ${
-                  timeLeft <= 5 ? "bg-rose-500" : "bg-teal-500"
-                }`}
-                style={{ width: `${(timeLeft / 15) * 100}%` }}
+            {/* Barra de contracción visual (embudo) */}
+            <div className="w-full bg-zinc-900 h-1 rounded-full overflow-hidden">
+              <div 
+                className="bg-white h-full transition-all duration-300"
+                style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}
               />
             </div>
 
-            <div className="py-4">
-              <span className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
-                {questions[currentIndex].category}
-              </span>
-              <h2 className="text-2xl font-bold mt-1">
+            {/* Pregunta */}
+            <div className="min-h-[90px] flex items-center">
+              <h2 className="text-2xl sm:text-3xl font-light tracking-tight text-white leading-snug">
                 {questions[currentIndex].prompt}
               </h2>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <input
-                type="text"
-                autoFocus
-                disabled={isSubmitting}
-                placeholder="Escribe tu respuesta..."
-                value={inputVal}
-                onChange={(e) => setInputVal(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 disabled:opacity-50"
-              >
-                {isSubmitting ? "Guardando..." : "Enviar Respuesta"}
-              </button>
-            </form>
-
-            {feedback && (
-              <div className="flex items-center gap-2 text-rose-400 text-sm justify-center bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">
-                <AlertCircle className="w-4 h-4" />
-                <span>{feedback}</span>
+            {/* Input */}
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div className="relative">
+                <input
+                  type="text"
+                  autoFocus
+                  disabled={isSubmitting}
+                  placeholder="Tu respuesta única..."
+                  value={inputVal}
+                  onChange={(e) => setInputVal(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-white focus:outline-none rounded-lg px-4 py-3.5 text-white placeholder-zinc-600 text-sm transition-all duration-200"
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !inputVal.trim()}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-zinc-400 hover:text-white disabled:opacity-30 transition"
+                  title="Enviar"
+                >
+                  <CornerDownLeft className="w-4 h-4" />
+                </button>
               </div>
-            )}
+
+              {feedback && (
+                <p className="text-xs font-mono text-red-400 text-center animate-in fade-in duration-200">
+                  {feedback}
+                </p>
+              )}
+            </form>
           </div>
         )}
 
-        {/* PANTALLA 3: RESULTADOS DIARIOS CON CONTADOR */}
+        {/* 3. RESUMEN */}
         {!isLoadingQuestions && gameState === "summary" && (
-          <div className="text-center space-y-6">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/20">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Reto diario completado
-            </div>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-              <span className="text-xs text-slate-400 uppercase tracking-wide">Puntuación Final</span>
-              <p className="text-4xl font-black text-white mt-1">{totalScore} <span className="text-base font-normal text-slate-400">pts</span></p>
-            </div>
-
-            {/* Cuenta atrás hasta la medianoche */}
-            <div className="bg-slate-800/40 p-3.5 rounded-xl border border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <Clock className="w-4 h-4 text-teal-400" />
-                <span>Siguiente reto en:</span>
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
+              <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
+                <span className="uppercase tracking-widest">Embudo Completado</span>
+                <span className="text-zinc-400">{getTodayKey()}</span>
               </div>
-              <span className="font-mono text-base font-bold text-teal-400 tracking-wider">
-                {timeToNext}
-              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-6xl font-light tracking-tighter text-white tabular-nums">
+                  {totalScore}
+                </span>
+                <span className="text-sm font-mono text-zinc-500 uppercase">pts</span>
+              </div>
+              <p className="text-xs text-zinc-400 border-t border-zinc-900 pt-3">
+                {totalScore > 400
+                  ? "Insuperable. Has navegado el embudo hasta el fondo esquivando la norma."
+                  : totalScore > 260
+                  ? "Sólido. Has mantenido la compostura a medida que el embudo se cerraba."
+                  : "El cuello de botella te ha forzado a respuestas demasiado comunes. Mañana tendrás revancha."}
+              </p>
             </div>
 
-            <div className="space-y-2 text-left">
-              {results.map((r, i) => (
-                <div
-                  key={i}
-                  className="flex justify-between items-center p-3 bg-slate-800/40 rounded-lg text-sm border border-slate-800/60"
-                >
-                  <div className="truncate pr-2">
-                    <p className="font-semibold text-slate-200 truncate">{r.question}</p>
-                    <p className="text-xs text-slate-400">
-                      Tu respuesta: <span className="text-slate-200 font-medium">{r.answer}</span>
-                      {r.success && normalize(r.answer) !== normalize(r.canonicalAnswer) && (
-                        <span className="text-teal-400 text-[11px] ml-1">
-                          (corregido a {r.canonicalAnswer})
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    {r.success ? (
-                      <div>
-                        <span className="text-emerald-400 font-mono font-bold">+{r.score}</span>
-                        <p className="text-[10px] text-slate-500">Popularidad: {r.rarity}%</p>
+            {/* Desglose de cada fase */}
+            <div className="space-y-2 border-t border-zinc-900 pt-4">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-zinc-500 mb-3">
+                Fases del Embudo
+              </p>
+              {results.map((r, i) => {
+                const isSpecial = r.success && r.rarity <= 20;
+                return (
+                  <div
+                    key={i}
+                    className="flex justify-between items-center py-2.5 px-3 border border-zinc-900 rounded-lg bg-zinc-950/30 text-xs"
+                  >
+                    <div className="truncate pr-2">
+                      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-mono">
+                        <span>R{i + 1}</span>
+                        <span>·</span>
+                        <span className="truncate">{r.category}</span>
                       </div>
-                    ) : (
-                      <span className="text-rose-400 font-bold">0 pts</span>
-                    )}
+                      <p className="text-zinc-300 font-normal truncate mt-0.5">{r.question}</p>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        <span className="text-zinc-200">{r.answer}</span>
+                        {r.success && normalize(r.answer) !== normalize(r.canonicalAnswer) && (
+                          <span className="text-zinc-500 ml-1">({r.canonicalAnswer})</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="text-right pl-3 font-mono shrink-0">
+                      {r.success ? (
+                        <div>
+                          <span className={`font-semibold ${isSpecial ? "text-amber-300" : "text-zinc-200"}`}>
+                            +{r.score}
+                          </span>
+                          <p className="text-[10px] text-zinc-500">
+                            {r.rarity}% {isSpecial && "✦"}
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600 font-semibold">0 pts</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
-            <button
-              onClick={copyShareText}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 shadow-lg shadow-teal-500/20"
-            >
-              <Share2 className="w-4 h-4" />
-              Compartir Resultado Diario
-            </button>
+            {/* Próximo reto y compartir */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-500 py-2 border-b border-zinc-900">
+                <span className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> Próximo reto
+                </span>
+                <span className="text-white tracking-widest tabular-nums">{timeToNext}</span>
+              </div>
 
-            {/* Enlace para resetear durante pruebas */}
-            <div className="pt-2">
+              <button
+                onClick={copyShareText}
+                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-white hover:bg-zinc-200 text-black font-medium text-xs rounded-lg uppercase tracking-wider transition"
+              >
+                {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
+                <span>{copied ? "Copiado al portapapeles" : "Compartir Resultado"}</span>
+              </button>
+            </div>
+
+            <div className="text-center pt-2">
               <button
                 onClick={resetDailyProgressForDev}
-                className="text-[11px] text-slate-500 hover:text-slate-400 underline transition"
+                className="text-[10px] font-mono text-zinc-600 hover:text-zinc-400 uppercase tracking-widest transition"
               >
-                [Modo Dev] Reiniciar reto de hoy para probar
+                [Reset partida para testear]
               </button>
             </div>
           </div>
         )}
 
       </div>
+
+      {/* FOOTER */}
+      <footer className="w-full max-w-lg mx-auto text-center border-t border-zinc-900 pt-4">
+        <p className="font-mono text-[11px] text-zinc-600 tracking-wider">
+          SPEZIAL — DISEÑADO PARA LOS QUE NO SIGUEN LA NORMA
+        </p>
+      </footer>
+
     </main>
   );
 }
