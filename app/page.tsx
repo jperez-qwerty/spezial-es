@@ -2,11 +2,12 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Timer, Trophy, Share2, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Timer, Trophy, Share2, RefreshCw, AlertCircle } from "lucide-react";
+import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
   text: string;
-  rarity: number; // Menor porcentaje = más raro = más puntos
+  defaultRarity: number; // Porcentaje base por si aún hay pocos votos
 }
 
 interface Question {
@@ -22,16 +23,16 @@ const QUESTIONS: Question[] = [
     prompt: "Un país de América del Sur",
     category: "Geografía",
     validAnswers: [
-      { text: "surinam", rarity: 4 },
-      { text: "guyana", rarity: 6 },
-      { text: "paraguay", rarity: 15 },
-      { text: "uruguay", rarity: 22 },
-      { text: "bolivia", rarity: 30 },
-      { text: "peru", rarity: 55 },
-      { text: "chile", rarity: 60 },
-      { text: "colombia", rarity: 75 },
-      { text: "argentina", rarity: 92 },
-      { text: "brasil", rarity: 95 }
+      { text: "surinam", defaultRarity: 4 },
+      { text: "guyana", defaultRarity: 6 },
+      { text: "paraguay", defaultRarity: 15 },
+      { text: "uruguay", defaultRarity: 22 },
+      { text: "bolivia", defaultRarity: 30 },
+      { text: "peru", defaultRarity: 55 },
+      { text: "chile", defaultRarity: 60 },
+      { text: "colombia", defaultRarity: 75 },
+      { text: "argentina", defaultRarity: 92 },
+      { text: "brasil", defaultRarity: 95 }
     ]
   },
   {
@@ -39,11 +40,11 @@ const QUESTIONS: Question[] = [
     prompt: "Una fruta que empiece por la letra M",
     category: "Alimentos",
     validAnswers: [
-      { text: "maracuya", rarity: 12 },
-      { text: "mora", rarity: 28 },
-      { text: "mango", rarity: 58 },
-      { text: "melocoton", rarity: 72 },
-      { text: "manzana", rarity: 96 }
+      { text: "maracuya", defaultRarity: 12 },
+      { text: "mora", defaultRarity: 28 },
+      { text: "mango", defaultRarity: 58 },
+      { text: "melocoton", defaultRarity: 72 },
+      { text: "manzana", defaultRarity: 96 }
     ]
   },
   {
@@ -51,14 +52,14 @@ const QUESTIONS: Question[] = [
     prompt: "Un color del arcoíris",
     category: "Naturaleza",
     validAnswers: [
-      { text: "añil", rarity: 5 },
-      { text: "indigo", rarity: 8 },
-      { text: "violeta", rarity: 24 },
-      { text: "naranja", rarity: 42 },
-      { text: "amarillo", rarity: 68 },
-      { text: "verde", rarity: 78 },
-      { text: "rojo", rarity: 94 },
-      { text: "azul", rarity: 95 }
+      { text: "anil", defaultRarity: 5 },
+      { text: "indigo", defaultRarity: 8 },
+      { text: "violeta", defaultRarity: 24 },
+      { text: "naranja", defaultRarity: 42 },
+      { text: "amarillo", defaultRarity: 68 },
+      { text: "verde", defaultRarity: 78 },
+      { text: "rojo", defaultRarity: 94 },
+      { text: "azul", defaultRarity: 95 }
     ]
   },
   {
@@ -66,12 +67,12 @@ const QUESTIONS: Question[] = [
     prompt: "Un instrumento musical de viento",
     category: "Música",
     validAnswers: [
-      { text: "fagot", rarity: 7 },
-      { text: "oboe", rarity: 14 },
-      { text: "tuba", rarity: 22 },
-      { text: "clarinete", rarity: 48 },
-      { text: "trompeta", rarity: 74 },
-      { text: "flauta", rarity: 89 }
+      { text: "fagot", defaultRarity: 7 },
+      { text: "oboe", defaultRarity: 14 },
+      { text: "tuba", defaultRarity: 22 },
+      { text: "clarinete", defaultRarity: 48 },
+      { text: "trompeta", defaultRarity: 74 },
+      { text: "flauta", defaultRarity: 89 }
     ]
   },
   {
@@ -79,13 +80,13 @@ const QUESTIONS: Question[] = [
     prompt: "Un elemento de la tabla periódica",
     category: "Ciencia",
     validAnswers: [
-      { text: "xenon", rarity: 6 },
-      { text: "tungsteno", rarity: 10 },
-      { text: "mercurio", rarity: 32 },
-      { text: "plata", rarity: 52 },
-      { text: "oro", rarity: 78 },
-      { text: "oxigeno", rarity: 91 },
-      { text: "hidrogeno", rarity: 96 }
+      { text: "xenon", defaultRarity: 6 },
+      { text: "tungsteno", defaultRarity: 10 },
+      { text: "mercurio", defaultRarity: 32 },
+      { text: "plata", defaultRarity: 52 },
+      { text: "oro", defaultRarity: 78 },
+      { text: "oxigeno", defaultRarity: 91 },
+      { text: "hidrogeno", defaultRarity: 96 }
     ]
   }
 ];
@@ -104,8 +105,8 @@ export default function Home() {
   const [timeLeft, setTimeLeft] = useState(15);
   const [inputVal, setInputVal] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Registro de resultados del jugador
   const [results, setResults] = useState<
     Array<{
       question: string;
@@ -116,7 +117,6 @@ export default function Home() {
     }>
   >([]);
 
-  // Temporizador de 15 segundos
   useEffect(() => {
     if (gameState !== "playing") return;
 
@@ -156,9 +156,9 @@ export default function Home() {
     advanceQuestion();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputVal.trim() || gameState !== "playing") return;
+    if (!inputVal.trim() || gameState !== "playing" || isSubmitting) return;
 
     const currentQ = QUESTIONS[currentIndex];
     const cleanInput = normalize(inputVal);
@@ -166,14 +166,48 @@ export default function Home() {
     const match = currentQ.validAnswers.find((ans) => normalize(ans.text) === cleanInput);
 
     if (match) {
-      // Puntuación: Cuanto menos popular, mayor puntuación
-      const points = 100 - match.rarity;
+      setIsSubmitting(true);
+      let calculatedRarity = match.defaultRarity;
+
+      try {
+        // 1. Guardar la respuesta en Supabase
+        await supabase.from("answers").insert([
+          {
+            question_id: currentQ.id,
+            raw_answer: inputVal.trim(),
+            normalized_answer: cleanInput
+          }
+        ]);
+
+        // 2. Consultar el total de respuestas de esta pregunta para calcular el porcentaje real
+        const { count: totalVotes } = await supabase
+          .from("answers")
+          .select("*", { count: "exact", head: true })
+          .eq("question_id", currentQ.id);
+
+        const { count: thisAnswerVotes } = await supabase
+          .from("answers")
+          .select("*", { count: "exact", head: true })
+          .eq("question_id", currentQ.id)
+          .eq("normalized_answer", cleanInput);
+
+        if (totalVotes && totalVotes > 5 && thisAnswerVotes) {
+          // Si ya hay más de 5 respuestas registradas, usamos la popularidad real de la comunidad
+          calculatedRarity = Math.max(1, Math.round((thisAnswerVotes / totalVotes) * 100));
+        }
+      } catch (err) {
+        console.error("Error conectando con Supabase:", err);
+      } finally {
+        setIsSubmitting(false);
+      }
+
+      const points = 100 - calculatedRarity;
       setResults((prev) => [
         ...prev,
         {
           question: currentQ.prompt,
           answer: inputVal,
-          rarity: match.rarity,
+          rarity: calculatedRarity,
           score: points,
           success: true
         }
@@ -205,7 +239,7 @@ export default function Home() {
       results
         .map((r) => (r.success ? (r.rarity < 20 ? "🪸" : "🐟") : "❌"))
         .join("") +
-      `\n\n¿Puedes encontrar las respuestas más raras?`;
+      `\n\nJuega aquí: https://spezial-es.vercel.app`;
 
     navigator.clipboard.writeText(shareText);
     alert("¡Resultado copiado al portapapeles!");
@@ -226,13 +260,13 @@ export default function Home() {
                 Krillion Español
               </h1>
               <p className="text-slate-400 mt-2 text-sm leading-relaxed">
-                El objetivo no es solo acertar, sino dar la respuesta correcta <b>más rara</b> o menos común.
+                El objetivo no es solo acertar, sino dar la respuesta correcta <b>más rara</b> según la comunidad.
               </p>
             </div>
             <div className="bg-slate-800/50 p-4 rounded-xl text-left text-xs text-slate-300 space-y-2 border border-slate-800">
               <p>⏱️ <b>15 segundos</b> por pregunta.</p>
-              <p>🪸 Respuestas raras dan la mayor puntuación.</p>
-              <p>🎯 Se aceptan sinónimos y variaciones sin tilde.</p>
+              <p>🪸 Las respuestas menos elegidas por otros jugadores dan más puntos.</p>
+              <p>🎯 Sin tildes ni mayúsculas.</p>
             </div>
             <button
               onClick={startGame}
@@ -256,7 +290,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Barra de progreso de tiempo */}
             <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
               <div
                 className={`h-full transition-all duration-1000 ${
@@ -279,16 +312,18 @@ export default function Home() {
               <input
                 type="text"
                 autoFocus
+                disabled={isSubmitting}
                 placeholder="Escribe tu respuesta..."
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 disabled:opacity-50"
               />
               <button
                 type="submit"
-                className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 disabled:opacity-50"
               >
-                Enviar Respuesta
+                {isSubmitting ? "Guardando..." : "Enviar Respuesta"}
               </button>
             </form>
 
