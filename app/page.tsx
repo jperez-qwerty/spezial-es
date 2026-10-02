@@ -91,12 +91,78 @@ const QUESTIONS: Question[] = [
   }
 ];
 
+// Limpieza de acentos, espacios y mayúsculas
 function normalize(str: string): string {
   return str
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+// Algoritmo de Distancia de Levenshtein (calcula número mínimo de ediciones)
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // sustitución
+          matrix[i][j - 1] + 1,     // inserción
+          matrix[i - 1][j] + 1      // borrado
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+// Comprobación difusa inteligente con tolerancia según longitud
+function findFuzzyMatch(userInput: string, validAnswers: AnswerOption[]): AnswerOption | null {
+  const cleanInput = normalize(userInput);
+
+  // 1. Coincidencia exacta primero
+  const exact = validAnswers.find((ans) => normalize(ans.text) === cleanInput);
+  if (exact) return exact;
+
+  // 2. Si no es exacta, buscamos la más cercana dentro del margen permitido
+  let bestMatch: AnswerOption | null = null;
+  let minDistance = Infinity;
+
+  for (const item of validAnswers) {
+    const target = normalize(item.text);
+    const dist = levenshteinDistance(cleanInput, target);
+
+    // Reglas de tolerancia:
+    // - Menos de 4 letras: 0 errores permitidos (ej: oro)
+    // - De 4 a 6 letras: hasta 1 error (ej: plata -> platta, flauta -> flautz)
+    // - Más de 6 letras: hasta 2 errores (ej: argentina -> arjentina)
+    let maxAllowed = 0;
+    if (target.length >= 7) {
+      maxAllowed = 2;
+    } else if (target.length >= 4) {
+      maxAllowed = 1;
+    }
+
+    if (dist <= maxAllowed && dist < minDistance) {
+      minDistance = dist;
+      bestMatch = item;
+    }
+  }
+
+  return bestMatch;
 }
 
 export default function Home() {
@@ -111,6 +177,7 @@ export default function Home() {
     Array<{
       question: string;
       answer: string;
+      canonicalAnswer: string;
       rarity: number;
       score: number;
       success: boolean;
@@ -148,6 +215,7 @@ export default function Home() {
       {
         question: currentQ.prompt,
         answer: "Tiempo agotado",
+        canonicalAnswer: "-",
         rarity: 100,
         score: 0,
         success: false
@@ -161,25 +229,25 @@ export default function Home() {
     if (!inputVal.trim() || gameState !== "playing" || isSubmitting) return;
 
     const currentQ = QUESTIONS[currentIndex];
-    const cleanInput = normalize(inputVal);
-
-    const match = currentQ.validAnswers.find((ans) => normalize(ans.text) === cleanInput);
+    
+    // Búsqueda con tolerancia a fallos tipográficos
+    const match = findFuzzyMatch(inputVal, currentQ.validAnswers);
 
     if (match) {
       setIsSubmitting(true);
+      const canonical = normalize(match.text);
       let calculatedRarity = match.defaultRarity;
 
       try {
-        // 1. Guardar la respuesta en Supabase
+        // Guardamos la respuesta normalizada a la forma canónica para que sume bien
         await supabase.from("answers").insert([
           {
             question_id: currentQ.id,
             raw_answer: inputVal.trim(),
-            normalized_answer: cleanInput
+            normalized_answer: canonical
           }
         ]);
 
-        // 2. Consultar el total de respuestas de esta pregunta para calcular el porcentaje real
         const { count: totalVotes } = await supabase
           .from("answers")
           .select("*", { count: "exact", head: true })
@@ -189,10 +257,9 @@ export default function Home() {
           .from("answers")
           .select("*", { count: "exact", head: true })
           .eq("question_id", currentQ.id)
-          .eq("normalized_answer", cleanInput);
+          .eq("normalized_answer", canonical);
 
         if (totalVotes && totalVotes > 5 && thisAnswerVotes) {
-          // Si ya hay más de 5 respuestas registradas, usamos la popularidad real de la comunidad
           calculatedRarity = Math.max(1, Math.round((thisAnswerVotes / totalVotes) * 100));
         }
       } catch (err) {
@@ -207,6 +274,7 @@ export default function Home() {
         {
           question: currentQ.prompt,
           answer: inputVal,
+          canonicalAnswer: match.text,
           rarity: calculatedRarity,
           score: points,
           success: true
@@ -265,8 +333,8 @@ export default function Home() {
             </div>
             <div className="bg-slate-800/50 p-4 rounded-xl text-left text-xs text-slate-300 space-y-2 border border-slate-800">
               <p>⏱️ <b>15 segundos</b> por pregunta.</p>
-              <p>🪸 Las respuestas menos elegidas por otros jugadores dan más puntos.</p>
-              <p>🎯 Sin tildes ni mayúsculas.</p>
+              <p>🪸 Respuestas raras otorgan mayor puntuación.</p>
+              <p>✨ <b>Tolerante a erratas leves</b> de teclado.</p>
             </div>
             <button
               onClick={startGame}
@@ -353,7 +421,14 @@ export default function Home() {
                 >
                   <div className="truncate pr-2">
                     <p className="font-semibold text-slate-200 truncate">{r.question}</p>
-                    <p className="text-xs text-slate-400">Tu respuesta: <span className="text-slate-200">{r.answer}</span></p>
+                    <p className="text-xs text-slate-400">
+                      Tu respuesta: <span className="text-slate-200 font-medium">{r.answer}</span>
+                      {r.success && normalize(r.answer) !== normalize(r.canonicalAnswer) && (
+                        <span className="text-teal-400 text-[11px] ml-1">
+                          (corregido a {r.canonicalAnswer})
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <div className="text-right">
                     {r.success ? (
