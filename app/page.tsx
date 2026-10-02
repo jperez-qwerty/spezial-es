@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check } from "lucide-react";
+import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check, Shuffle } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
@@ -29,22 +29,22 @@ interface GameResult {
   difficulty: number;
 }
 
+const ROUND_TIME_SECONDS = 25;
+const GAME_EPOCH = new Date("2026-10-01T00:00:00Z").getTime();
+
+function getDayNumber(): number {
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.floor((todayUtc - GAME_EPOCH) / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+}
+
 function getTodayKey(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-// Genera un número entero a partir de un string de fecha (semilla)
-function getSeedFromDate(dateStr: string): number {
-  let hash = 0;
-  for (let i = 0; i < dateStr.length; i++) {
-    hash = (hash << 5) - hash + dateStr.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
 }
 
 function getTimeUntilMidnight(): string {
@@ -126,27 +126,40 @@ const DIFFICULTY_LABELS: Record<number, string> = {
 };
 
 export default function Home() {
+  const [allQuestionsPool, setAllQuestionsPool] = useState<Question[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
   const [gameState, setGameState] = useState<"intro" | "playing" | "summary">("intro");
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(15);
+  const [timeLeft, setTimeLeft] = useState(ROUND_TIME_SECONDS);
   const [inputVal, setInputVal] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [alreadyPlayedToday, setAlreadyPlayedToday] = useState(false);
+  const [isDevSession, setIsDevSession] = useState(false);
   const [timeToNext, setTimeToNext] = useState<string>("");
   const [copied, setCopied] = useState(false);
 
   const [results, setResults] = useState<GameResult[]>([]);
 
+  const buildQuestionSet = (pool: Question[], dayIndex: number) => {
+    const dailySelection: Question[] = [];
+    for (let d = 1; d <= 5; d++) {
+      const poolForDiff = pool.filter((q) => q.difficulty === d).sort((a, b) => a.id - b.id);
+      if (poolForDiff.length > 0) {
+        const selectedIndex = dayIndex % poolForDiff.length;
+        dailySelection.push(poolForDiff[selectedIndex]);
+      }
+    }
+    return dailySelection;
+  };
+
   useEffect(() => {
     async function init() {
       try {
         const today = getTodayKey();
-        const seed = getSeedFromDate(today);
+        const dayIndex = getDayNumber();
 
-        // Traemos toda la pool
         const { data, error } = await supabase
           .from("questions")
           .select("id, prompt, category, difficulty, valid_answers");
@@ -154,19 +167,9 @@ export default function Home() {
         if (error) throw error;
 
         if (data && data.length > 0) {
-          const allQuestions = data as Question[];
-          
-          // Seleccionamos deterministamente exactamente 1 de cada dificultad (1 a 5)
-          const dailySelection: Question[] = [];
-          for (let d = 1; d <= 5; d++) {
-            const poolForDiff = allQuestions.filter((q) => q.difficulty === d);
-            if (poolForDiff.length > 0) {
-              const selectedIndex = (seed + d) % poolForDiff.length;
-              dailySelection.push(poolForDiff[selectedIndex]);
-            }
-          }
-
-          setQuestions(dailySelection);
+          const pool = data as Question[];
+          setAllQuestionsPool(pool);
+          setQuestions(buildQuestionSet(pool, dayIndex));
         }
 
         const savedData = localStorage.getItem(`spezial_${today}`);
@@ -209,11 +212,23 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [gameState, timeLeft]);
 
+  const shuffleQuestionsForTesting = () => {
+    if (allQuestionsPool.length === 0) return;
+    const randomDayOffset = Math.floor(Math.random() * 50);
+    setQuestions(buildQuestionSet(allQuestionsPool, randomDayOffset));
+    setIsDevSession(true);
+    setAlreadyPlayedToday(false);
+    setResults([]);
+    setCurrentIndex(0);
+    setTimeLeft(ROUND_TIME_SECONDS);
+    setGameState("playing");
+  };
+
   const startGame = () => {
     if (questions.length === 0 || alreadyPlayedToday) return;
     setGameState("playing");
     setCurrentIndex(0);
-    setTimeLeft(15);
+    setTimeLeft(ROUND_TIME_SECONDS);
     setResults([]);
     setFeedback(null);
     setInputVal("");
@@ -306,18 +321,20 @@ export default function Home() {
     setFeedback(null);
     if (currentIndex + 1 < questions.length) {
       setCurrentIndex((prev) => prev + 1);
-      setTimeLeft(15);
+      setTimeLeft(ROUND_TIME_SECONDS);
     } else {
-      const today = getTodayKey();
-      localStorage.setItem(
-        `spezial_${today}`,
-        JSON.stringify({
-          date: today,
-          results: currentResultsList,
-          completedAt: new Date().toISOString()
-        })
-      );
-      setAlreadyPlayedToday(true);
+      if (!isDevSession) {
+        const today = getTodayKey();
+        localStorage.setItem(
+          `spezial_${today}`,
+          JSON.stringify({
+            date: today,
+            results: currentResultsList,
+            completedAt: new Date().toISOString()
+          })
+        );
+        setAlreadyPlayedToday(true);
+      }
       setGameState("summary");
       confetti({
         particleCount: 80,
@@ -332,6 +349,7 @@ export default function Home() {
     const today = getTodayKey();
     localStorage.removeItem(`spezial_${today}`);
     setAlreadyPlayedToday(false);
+    setIsDevSession(false);
     setResults([]);
     setGameState("intro");
   };
@@ -360,7 +378,7 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
           <span className="font-mono text-xs uppercase tracking-[0.25em] text-zinc-400">
-            SPEZIAL
+            SPEZIAL {isDevSession && <span className="text-amber-400 text-[10px] tracking-normal">[TEST RUN]</span>}
           </span>
         </div>
         <div className="font-mono text-xs text-zinc-500 tracking-wider">
@@ -397,6 +415,22 @@ export default function Home() {
               </p>
             </div>
 
+            {/* Cuadrícula de estadísticas clave */}
+            <div className="border-t border-b border-zinc-900 py-4 grid grid-cols-3 gap-4 text-center font-mono">
+              <div>
+                <p className="text-lg text-white font-medium">5</p>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Rondas</p>
+              </div>
+              <div className="border-x border-zinc-900">
+                <p className="text-lg text-white font-medium">{ROUND_TIME_SECONDS}s</p>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Tiempo</p>
+              </div>
+              <div>
+                <p className="text-lg text-white font-medium">1 / día</p>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-0.5">Intento</p>
+              </div>
+            </div>
+
             {/* Estructura del embudo */}
             <div className="border border-zinc-900 rounded-xl p-4 bg-zinc-950/40 space-y-2.5 font-mono text-xs">
               <div className="flex justify-between items-center text-zinc-400">
@@ -413,21 +447,30 @@ export default function Home() {
               </div>
             </div>
 
-            <button
-              onClick={startGame}
-              disabled={questions.length === 0}
-              className="w-full group flex items-center justify-between px-6 py-4 bg-white hover:bg-zinc-200 text-black font-medium text-sm rounded-lg transition duration-200 disabled:opacity-50"
-            >
-              <span>Comenzar Inmersión</span>
-              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={startGame}
+                disabled={questions.length === 0}
+                className="w-full group flex items-center justify-between px-6 py-4 bg-white hover:bg-zinc-200 text-black font-medium text-sm rounded-lg transition duration-200 disabled:opacity-50"
+              >
+                <span>Jugar Reto Oficial de Hoy</span>
+                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+              </button>
+
+              <button
+                onClick={shuffleQuestionsForTesting}
+                className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white font-mono text-xs rounded-lg transition"
+              >
+                <Shuffle className="w-3.5 h-3.5" />
+                <span>Generar combinación aleatoria (Pruebas)</span>
+              </button>
+            </div>
           </div>
         )}
 
         {/* 2. JUEGO ACTIVO */}
         {!isLoadingQuestions && gameState === "playing" && questions.length > 0 && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            {/* Cabecera del turno */}
             <div className="flex justify-between items-end border-b border-zinc-900 pb-3">
               <div>
                 <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
@@ -451,7 +494,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Barra de contracción visual (embudo) */}
             <div className="w-full bg-zinc-900 h-1 rounded-full overflow-hidden">
               <div 
                 className="bg-white h-full transition-all duration-300"
@@ -459,14 +501,12 @@ export default function Home() {
               />
             </div>
 
-            {/* Pregunta */}
             <div className="min-h-[90px] flex items-center">
               <h2 className="text-2xl sm:text-3xl font-light tracking-tight text-white leading-snug">
                 {questions[currentIndex].prompt}
               </h2>
             </div>
 
-            {/* Input */}
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="relative">
                 <input
@@ -502,7 +542,9 @@ export default function Home() {
           <div className="space-y-8 animate-in fade-in duration-500">
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
-                <span className="uppercase tracking-widest">Embudo Completado</span>
+                <span className="uppercase tracking-widest">
+                  {isDevSession ? "Partida de Prueba" : "Embudo Completado"}
+                </span>
                 <span className="text-zinc-400">{getTodayKey()}</span>
               </div>
               <div className="flex items-baseline gap-2">
@@ -516,7 +558,7 @@ export default function Home() {
                   ? "Insuperable. Has navegado el embudo hasta el fondo esquivando la norma."
                   : totalScore > 260
                   ? "Sólido. Has mantenido la compostura a medida que el embudo se cerraba."
-                  : "El cuello de botella te ha forzado a respuestas demasiado comunes. Mañana tendrás revancha."}
+                  : "El cuello de botella te ha forzado a respuestas demasiado comunes."}
               </p>
             </div>
 
@@ -565,7 +607,7 @@ export default function Home() {
               })}
             </div>
 
-            {/* Próximo reto y compartir */}
+            {/* Acciones */}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs font-mono text-zinc-500 py-2 border-b border-zinc-900">
                 <span className="flex items-center gap-1.5">
@@ -574,13 +616,22 @@ export default function Home() {
                 <span className="text-white tracking-widest tabular-nums">{timeToNext}</span>
               </div>
 
-              <button
-                onClick={copyShareText}
-                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-white hover:bg-zinc-200 text-black font-medium text-xs rounded-lg uppercase tracking-wider transition"
-              >
-                {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
-                <span>{copied ? "Copiado al portapapeles" : "Compartir Resultado"}</span>
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={copyShareText}
+                  className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 bg-white hover:bg-zinc-200 text-black font-medium text-xs rounded-lg uppercase tracking-wider transition"
+                >
+                  {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
+                  <span>{copied ? "Copiado" : "Compartir"}</span>
+                </button>
+                <button
+                  onClick={shuffleQuestionsForTesting}
+                  className="px-4 py-3.5 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white rounded-lg transition"
+                  title="Probar otra combinación aleatoria"
+                >
+                  <Shuffle className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="text-center pt-2">
@@ -588,7 +639,7 @@ export default function Home() {
                 onClick={resetDailyProgressForDev}
                 className="text-[10px] font-mono text-zinc-600 hover:text-zinc-400 uppercase tracking-widest transition"
               >
-                [Reset partida para testear]
+                [Reset reto diario]
               </button>
             </div>
           </div>
