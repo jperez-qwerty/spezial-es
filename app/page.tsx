@@ -2,96 +2,21 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Timer, Trophy, Share2, RefreshCw, AlertCircle } from "lucide-react";
+import { Timer, Trophy, Share2, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
   text: string;
-  defaultRarity: number; // Porcentaje base por si aún hay pocos votos
+  defaultRarity: number;
 }
 
 interface Question {
   id: number;
   prompt: string;
   category: string;
-  validAnswers: AnswerOption[];
+  valid_answers: AnswerOption[];
 }
 
-const QUESTIONS: Question[] = [
-  {
-    id: 1,
-    prompt: "Un país de América del Sur",
-    category: "Geografía",
-    validAnswers: [
-      { text: "surinam", defaultRarity: 4 },
-      { text: "guyana", defaultRarity: 6 },
-      { text: "paraguay", defaultRarity: 15 },
-      { text: "uruguay", defaultRarity: 22 },
-      { text: "bolivia", defaultRarity: 30 },
-      { text: "peru", defaultRarity: 55 },
-      { text: "chile", defaultRarity: 60 },
-      { text: "colombia", defaultRarity: 75 },
-      { text: "argentina", defaultRarity: 92 },
-      { text: "brasil", defaultRarity: 95 }
-    ]
-  },
-  {
-    id: 2,
-    prompt: "Una fruta que empiece por la letra M",
-    category: "Alimentos",
-    validAnswers: [
-      { text: "maracuya", defaultRarity: 12 },
-      { text: "mora", defaultRarity: 28 },
-      { text: "mango", defaultRarity: 58 },
-      { text: "melocoton", defaultRarity: 72 },
-      { text: "manzana", defaultRarity: 96 }
-    ]
-  },
-  {
-    id: 3,
-    prompt: "Un color del arcoíris",
-    category: "Naturaleza",
-    validAnswers: [
-      { text: "anil", defaultRarity: 5 },
-      { text: "indigo", defaultRarity: 8 },
-      { text: "violeta", defaultRarity: 24 },
-      { text: "naranja", defaultRarity: 42 },
-      { text: "amarillo", defaultRarity: 68 },
-      { text: "verde", defaultRarity: 78 },
-      { text: "rojo", defaultRarity: 94 },
-      { text: "azul", defaultRarity: 95 }
-    ]
-  },
-  {
-    id: 4,
-    prompt: "Un instrumento musical de viento",
-    category: "Música",
-    validAnswers: [
-      { text: "fagot", defaultRarity: 7 },
-      { text: "oboe", defaultRarity: 14 },
-      { text: "tuba", defaultRarity: 22 },
-      { text: "clarinete", defaultRarity: 48 },
-      { text: "trompeta", defaultRarity: 74 },
-      { text: "flauta", defaultRarity: 89 }
-    ]
-  },
-  {
-    id: 5,
-    prompt: "Un elemento de la tabla periódica",
-    category: "Ciencia",
-    validAnswers: [
-      { text: "xenon", defaultRarity: 6 },
-      { text: "tungsteno", defaultRarity: 10 },
-      { text: "mercurio", defaultRarity: 32 },
-      { text: "plata", defaultRarity: 52 },
-      { text: "oro", defaultRarity: 78 },
-      { text: "oxigeno", defaultRarity: 91 },
-      { text: "hidrogeno", defaultRarity: 96 }
-    ]
-  }
-];
-
-// Limpieza de acentos, espacios y mayúsculas
 function normalize(str: string): string {
   return str
     .trim()
@@ -100,7 +25,6 @@ function normalize(str: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-// Algoritmo de Distancia de Levenshtein (calcula número mínimo de ediciones)
 function levenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = [];
 
@@ -118,9 +42,9 @@ function levenshteinDistance(a: string, b: string): number {
         matrix[i][j] = matrix[i - 1][j - 1];
       } else {
         matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // sustitución
-          matrix[i][j - 1] + 1,     // inserción
-          matrix[i - 1][j] + 1      // borrado
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
         );
       }
     }
@@ -129,15 +53,11 @@ function levenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-// Comprobación difusa inteligente con tolerancia según longitud
 function findFuzzyMatch(userInput: string, validAnswers: AnswerOption[]): AnswerOption | null {
   const cleanInput = normalize(userInput);
-
-  // 1. Coincidencia exacta primero
   const exact = validAnswers.find((ans) => normalize(ans.text) === cleanInput);
   if (exact) return exact;
 
-  // 2. Si no es exacta, buscamos la más cercana dentro del margen permitido
   let bestMatch: AnswerOption | null = null;
   let minDistance = Infinity;
 
@@ -145,10 +65,6 @@ function findFuzzyMatch(userInput: string, validAnswers: AnswerOption[]): Answer
     const target = normalize(item.text);
     const dist = levenshteinDistance(cleanInput, target);
 
-    // Reglas de tolerancia:
-    // - Menos de 4 letras: 0 errores permitidos (ej: oro)
-    // - De 4 a 6 letras: hasta 1 error (ej: plata -> platta, flauta -> flautz)
-    // - Más de 6 letras: hasta 2 errores (ej: argentina -> arjentina)
     let maxAllowed = 0;
     if (target.length >= 7) {
       maxAllowed = 2;
@@ -166,6 +82,8 @@ function findFuzzyMatch(userInput: string, validAnswers: AnswerOption[]): Answer
 }
 
 export default function Home() {
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
   const [gameState, setGameState] = useState<"intro" | "playing" | "summary">("intro");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(15);
@@ -184,6 +102,30 @@ export default function Home() {
     }>
   >([]);
 
+  // 1. Cargar preguntas directamente desde Supabase al inicio
+  useEffect(() => {
+    async function fetchQuestions() {
+      try {
+        const { data, error } = await supabase
+          .from("questions")
+          .select("id, prompt, category, valid_answers")
+          .order("id", { ascending: true });
+
+        if (error) throw error;
+        if (data && data.length > 0) {
+          setQuestions(data as Question[]);
+        }
+      } catch (err) {
+        console.error("Error al cargar preguntas de Supabase:", err);
+      } finally {
+        setIsLoadingQuestions(false);
+      }
+    }
+
+    fetchQuestions();
+  }, []);
+
+  // 2. Temporizador
   useEffect(() => {
     if (gameState !== "playing") return;
 
@@ -200,6 +142,7 @@ export default function Home() {
   }, [gameState, timeLeft]);
 
   const startGame = () => {
+    if (questions.length === 0) return;
     setGameState("playing");
     setCurrentIndex(0);
     setTimeLeft(15);
@@ -209,7 +152,7 @@ export default function Home() {
   };
 
   const handleTimeout = () => {
-    const currentQ = QUESTIONS[currentIndex];
+    const currentQ = questions[currentIndex];
     setResults((prev) => [
       ...prev,
       {
@@ -228,10 +171,8 @@ export default function Home() {
     e.preventDefault();
     if (!inputVal.trim() || gameState !== "playing" || isSubmitting) return;
 
-    const currentQ = QUESTIONS[currentIndex];
-    
-    // Búsqueda con tolerancia a fallos tipográficos
-    const match = findFuzzyMatch(inputVal, currentQ.validAnswers);
+    const currentQ = questions[currentIndex];
+    const match = findFuzzyMatch(inputVal, currentQ.valid_answers || []);
 
     if (match) {
       setIsSubmitting(true);
@@ -239,7 +180,6 @@ export default function Home() {
       let calculatedRarity = match.defaultRarity;
 
       try {
-        // Guardamos la respuesta normalizada a la forma canónica para que sume bien
         await supabase.from("answers").insert([
           {
             question_id: currentQ.id,
@@ -290,7 +230,7 @@ export default function Home() {
   const advanceQuestion = () => {
     setInputVal("");
     setFeedback(null);
-    if (currentIndex + 1 < QUESTIONS.length) {
+    if (currentIndex + 1 < questions.length) {
       setCurrentIndex((prev) => prev + 1);
       setTimeLeft(15);
     } else {
@@ -317,8 +257,16 @@ export default function Home() {
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
         
+        {/* PANTALLA DE CARGA */}
+        {isLoadingQuestions && (
+          <div className="text-center py-12 space-y-4">
+            <Loader2 className="w-8 h-8 text-teal-400 animate-spin mx-auto" />
+            <p className="text-slate-400 text-sm">Cargando preguntas de la base de datos...</p>
+          </div>
+        )}
+
         {/* PANTALLA 1: INTRO */}
-        {gameState === "intro" && (
+        {!isLoadingQuestions && gameState === "intro" && (
           <div className="text-center space-y-6">
             <div className="inline-block p-4 bg-teal-500/10 rounded-full text-teal-400">
               <Trophy className="w-12 h-12" />
@@ -334,11 +282,12 @@ export default function Home() {
             <div className="bg-slate-800/50 p-4 rounded-xl text-left text-xs text-slate-300 space-y-2 border border-slate-800">
               <p>⏱️ <b>15 segundos</b> por pregunta.</p>
               <p>🪸 Respuestas raras otorgan mayor puntuación.</p>
-              <p>✨ <b>Tolerante a erratas leves</b> de teclado.</p>
+              <p>✨ Preguntas dinámicas sincronizadas en tiempo real.</p>
             </div>
             <button
               onClick={startGame}
-              className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200"
+              disabled={questions.length === 0}
+              className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl transition duration-200 disabled:opacity-50"
             >
               Comenzar Inmersión
             </button>
@@ -346,11 +295,11 @@ export default function Home() {
         )}
 
         {/* PANTALLA 2: JUEGO ACTIVO */}
-        {gameState === "playing" && (
+        {!isLoadingQuestions && gameState === "playing" && questions.length > 0 && (
           <div className="space-y-6">
             <div className="flex justify-between items-center text-sm font-medium">
               <span className="text-teal-400">
-                Pregunta {currentIndex + 1} de {QUESTIONS.length}
+                Pregunta {currentIndex + 1} de {questions.length}
               </span>
               <div className="flex items-center gap-1.5 text-amber-400 font-mono text-base">
                 <Timer className="w-5 h-5 animate-pulse" />
@@ -369,10 +318,10 @@ export default function Home() {
 
             <div className="py-4">
               <span className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
-                {QUESTIONS[currentIndex].category}
+                {questions[currentIndex].category}
               </span>
               <h2 className="text-2xl font-bold mt-1">
-                {QUESTIONS[currentIndex].prompt}
+                {questions[currentIndex].prompt}
               </h2>
             </div>
 
@@ -404,8 +353,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* PANTALLA 3: RESUMEN / RESULTADOS */}
-        {gameState === "summary" && (
+        {/* PANTALLA 3: RESULTADOS */}
+        {!isLoadingQuestions && gameState === "summary" && (
           <div className="text-center space-y-6">
             <h2 className="text-2xl font-bold text-teal-400">Inmersión Completada</h2>
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
