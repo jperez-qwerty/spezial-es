@@ -11,7 +11,6 @@ import {
   Loader2, 
   Check, 
   Shuffle, 
-  Trophy, 
   User, 
   Flame, 
   BarChart3, 
@@ -63,8 +62,8 @@ interface UserStats {
 
 const ROUND_TIME_SECONDS = 25;
 const GAME_EPOCH = new Date("2026-10-01T00:00:00Z").getTime();
+const IS_DEV = process.env.NODE_ENV === "development";
 
-// --- SINTETIZADOR NATIVO (WEB AUDIO API) ---
 class SoundManager {
   private ctx: AudioContext | null = null;
   public enabled: boolean = true;
@@ -354,7 +353,6 @@ export default function Home() {
         const today = getTodayKey();
         const dayIndex = getDayNumber();
 
-        // Cargar preferencia de sonido
         const savedSound = localStorage.getItem("spezial_sound_enabled");
         if (savedSound !== null) {
           const val = savedSound === "true";
@@ -362,13 +360,11 @@ export default function Home() {
           sounds.enabled = val;
         }
 
-        // Cargar nick habitual
         const rememberedNick = localStorage.getItem("spezial_saved_nickname");
         if (rememberedNick) {
           setNicknameInput(rememberedNick);
         }
 
-        // Cargar estadísticas
         const savedStats = localStorage.getItem("spezial_user_stats");
         if (savedStats) {
           try {
@@ -675,7 +671,7 @@ export default function Home() {
       `Puntuación de Singularidad: ${totalScore} pts\n` +
       `Racha: ${stats.currentStreak} 🔥\n` +
       results
-        .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫️️") : "✕"))
+        .map((r) => (r.success ? (r.rarity <= 15 ? "⬛" : r.rarity <= 50 ? "◽" : "▫") : "✕"))
         .join("") +
       `\n\n¿Eres capaz de llegar al Abismo?: https://spezial-es.vercel.app`;
 
@@ -689,9 +685,8 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between selection:bg-zinc-800 selection:text-white px-4 py-8 antialiased font-sans">
       
-      {/* HEADER: OPCIÓN A (Sonido a la izquierda con la marca, Estadísticas agrupadas a la derecha) */}
+      {/* HEADER */}
       <header className="w-full max-w-lg mx-auto flex items-center justify-between border-b border-zinc-900 pb-4">
-        {/* Lado izquierdo: Marca + botón de sonido */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
@@ -702,7 +697,6 @@ export default function Home() {
 
           <span className="h-3 w-px bg-zinc-800" />
 
-          {/* Control de sonido colocado discretamente junto a la marca */}
           <button
             onClick={toggleSound}
             className="p-1 rounded-md border border-zinc-800/80 hover:border-zinc-700 text-zinc-400 hover:text-white transition"
@@ -712,7 +706,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Lado derecho: Estadísticas del jugador exclusivamente */}
         <div className="flex items-center gap-2">
           {stats.currentStreak > 0 && (
             <div 
@@ -855,13 +848,16 @@ export default function Home() {
                 <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
               </button>
 
-              <button
-                onClick={shuffleQuestionsForTesting}
-                className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white font-mono text-xs rounded-lg transition"
-              >
-                <Shuffle className="w-3.5 h-3.5" />
-                <span>Generar combinación aleatoria (Pruebas)</span>
-              </button>
+              {/* Botón solo visible en local (desarrollo) */}
+              {IS_DEV && (
+                <button
+                  onClick={shuffleQuestionsForTesting}
+                  className="w-full flex items-center justify-center gap-2 py-3 border border-dashed border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white font-mono text-xs rounded-lg transition"
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                  <span>Generar combinación aleatoria (Dev)</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -938,7 +934,6 @@ export default function Home() {
         {/* 3. RESUMEN Y LEADERBOARD */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Tarjeta de puntuación con racha */}
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
                 <span className="uppercase tracking-widest">
@@ -969,7 +964,7 @@ export default function Home() {
               </p>
             </div>
 
-            {/* SECCIÓN REGISTRO DE ALIAS CON AUTOCOMPLETADO */}
+            {/* SECCIÓN REGISTRO DE ALIAS */}
             {!submittedNickname ? (
               <div className="border border-zinc-900 rounded-xl p-5 bg-zinc-950/40 space-y-3">
                 <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
@@ -1123,24 +1118,30 @@ export default function Home() {
                   {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
                   <span>{copied ? "Copiado" : "Compartir"}</span>
                 </button>
-                <button
-                  onClick={shuffleQuestionsForTesting}
-                  className="px-4 py-3.5 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white rounded-lg transition"
-                  title="Probar otra combinación aleatoria"
-                >
-                  <Shuffle className="w-4 h-4" />
-                </button>
+
+                {IS_DEV && (
+                  <button
+                    onClick={shuffleQuestionsForTesting}
+                    className="px-4 py-3.5 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white rounded-lg transition"
+                    title="Probar otra combinación aleatoria (Dev)"
+                  >
+                    <Shuffle className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="text-center pt-2">
-              <button
-                onClick={resetDailyProgressForDev}
-                className="text-[10px] font-mono text-zinc-600 hover:text-zinc-400 uppercase tracking-widest transition"
-              >
-                [Reset reto diario]
-              </button>
-            </div>
+            {/* Reset en dev */}
+            {IS_DEV && (
+              <div className="text-center pt-2">
+                <button
+                  onClick={resetDailyProgressForDev}
+                  className="text-[10px] font-mono text-zinc-600 hover:text-zinc-400 uppercase tracking-widest transition"
+                >
+                  [Reset reto diario (Dev)]
+                </button>
+              </div>
+            )}
           </div>
         )}
 
