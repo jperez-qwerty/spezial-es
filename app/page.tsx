@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check, Shuffle } from "lucide-react";
+import { Share2, Sparkles, Clock, ArrowRight, CornerDownLeft, Loader2, Check, Shuffle, Trophy, User } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 interface AnswerOption {
@@ -27,6 +27,13 @@ interface GameResult {
   score: number;
   success: boolean;
   difficulty: number;
+}
+
+interface LeaderboardEntry {
+  id: string;
+  nickname: string;
+  score: number;
+  created_at: string;
 }
 
 const ROUND_TIME_SECONDS = 25;
@@ -142,6 +149,13 @@ export default function Home() {
 
   const [results, setResults] = useState<GameResult[]>([]);
 
+  // Estados del Leaderboard
+  const [nicknameInput, setNicknameInput] = useState("");
+  const [submittedNickname, setSubmittedNickname] = useState<string | null>(null);
+  const [isSubmittingScore, setIsSubmittingScore] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
+
   const buildQuestionSet = (pool: Question[], dayIndex: number) => {
     const dailySelection: Question[] = [];
     for (let d = 1; d <= 5; d++) {
@@ -152,6 +166,26 @@ export default function Home() {
       }
     }
     return dailySelection;
+  };
+
+  const fetchLeaderboard = async () => {
+    setIsLoadingLeaderboard(true);
+    try {
+      const today = getTodayKey();
+      const { data, error } = await supabase
+        .from("daily_scores")
+        .select("id, nickname, score, created_at")
+        .eq("date_key", today)
+        .order("score", { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setLeaderboard((data as LeaderboardEntry[]) || []);
+    } catch (err) {
+      console.error("Error al cargar ranking:", err);
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
   };
 
   useEffect(() => {
@@ -177,7 +211,11 @@ export default function Home() {
           const parsed = JSON.parse(savedData);
           setResults(parsed.results || []);
           setAlreadyPlayedToday(true);
+          if (parsed.submittedNickname) {
+            setSubmittedNickname(parsed.submittedNickname);
+          }
           setGameState("summary");
+          fetchLeaderboard();
         }
       } catch (err) {
         console.error("Error al inicializar:", err);
@@ -219,6 +257,7 @@ export default function Home() {
     setIsDevSession(true);
     setAlreadyPlayedToday(false);
     setResults([]);
+    setSubmittedNickname(null);
     setCurrentIndex(0);
     setTimeLeft(ROUND_TIME_SECONDS);
     setGameState("playing");
@@ -336,6 +375,7 @@ export default function Home() {
         setAlreadyPlayedToday(true);
       }
       setGameState("summary");
+      fetchLeaderboard();
       confetti({
         particleCount: 80,
         spread: 60,
@@ -345,16 +385,56 @@ export default function Home() {
     }
   };
 
+  const totalScore = results.reduce((acc, r) => acc + r.score, 0);
+
+  // Enviar puntuación al leaderboard
+  const handleScoreSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanNick = nicknameInput.trim().slice(0, 12);
+    if (!cleanNick || isSubmittingScore) return;
+
+    setIsSubmittingScore(true);
+    const today = getTodayKey();
+
+    try {
+      const { error } = await supabase.from("daily_scores").insert([
+        {
+          date_key: today,
+          nickname: cleanNick,
+          score: totalScore
+        }
+      ]);
+
+      if (error) throw error;
+
+      setSubmittedNickname(cleanNick);
+      // Persistir que ya envió su alias hoy
+      if (!isDevSession) {
+        const savedData = localStorage.getItem(`spezial_${today}`);
+        if (savedData) {
+          const parsed = JSON.parse(savedData);
+          parsed.submittedNickname = cleanNick;
+          localStorage.setItem(`spezial_${today}`, JSON.stringify(parsed));
+        }
+      }
+
+      await fetchLeaderboard();
+    } catch (err) {
+      console.error("Error enviando puntuación:", err);
+    } finally {
+      setIsSubmittingScore(false);
+    }
+  };
+
   const resetDailyProgressForDev = () => {
     const today = getTodayKey();
     localStorage.removeItem(`spezial_${today}`);
     setAlreadyPlayedToday(false);
     setIsDevSession(false);
     setResults([]);
+    setSubmittedNickname(null);
     setGameState("intro");
   };
-
-  const totalScore = results.reduce((acc, r) => acc + r.score, 0);
 
   const copyShareText = () => {
     const today = getTodayKey();
@@ -415,7 +495,6 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Cuadrícula de estadísticas clave */}
             <div className="border-t border-b border-zinc-900 py-4 grid grid-cols-3 gap-4 text-center font-mono">
               <div>
                 <p className="text-lg text-white font-medium">5</p>
@@ -431,7 +510,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Estructura del embudo */}
             <div className="border border-zinc-900 rounded-xl p-4 bg-zinc-950/40 space-y-2.5 font-mono text-xs">
               <div className="flex justify-between items-center text-zinc-400">
                 <span>Ronda 1 · Océano</span>
@@ -537,9 +615,10 @@ export default function Home() {
           </div>
         )}
 
-        {/* 3. RESUMEN */}
+        {/* 3. RESUMEN Y LEADERBOARD */}
         {!isLoadingQuestions && gameState === "summary" && (
           <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Tarjeta de puntuación */}
             <div className="border border-zinc-900 rounded-xl p-6 bg-zinc-950/60 backdrop-blur space-y-4">
               <div className="flex justify-between items-center text-xs font-mono text-zinc-500">
                 <span className="uppercase tracking-widest">
@@ -551,7 +630,7 @@ export default function Home() {
                 <span className="text-6xl font-light tracking-tighter text-white tabular-nums">
                   {totalScore}
                 </span>
-                <span className="text-sm font-mono text-zinc-500 uppercase">pts</span>
+                <span className="text-sm font-mono text-zinc-500 uppercase">pts / 500</span>
               </div>
               <p className="text-xs text-zinc-400 border-t border-zinc-900 pt-3">
                 {totalScore > 400
@@ -562,10 +641,95 @@ export default function Home() {
               </p>
             </div>
 
+            {/* SECCIÓN REGISTRO DE ALIAS EN EL RANKING */}
+            {!submittedNickname ? (
+              <div className="border border-zinc-900 rounded-xl p-5 bg-zinc-950/40 space-y-3">
+                <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 uppercase tracking-wider">
+                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Inscribir en el Leaderboard</span>
+                </div>
+                <form onSubmit={handleScoreSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    maxLength={12}
+                    placeholder="Tu alias (ej: NEO_99)"
+                    value={nicknameInput}
+                    onChange={(e) => setNicknameInput(e.target.value)}
+                    className="flex-1 bg-zinc-900 border border-zinc-800 focus:border-zinc-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-600 font-mono uppercase"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSubmittingScore || !nicknameInput.trim()}
+                    className="px-4 py-2 bg-white hover:bg-zinc-200 text-black text-xs font-mono font-medium rounded-lg uppercase tracking-wider disabled:opacity-40 transition"
+                  >
+                    {isSubmittingScore ? "..." : "Enviar"}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between px-4 py-3 border border-zinc-900 rounded-lg bg-zinc-950/20 text-xs font-mono text-zinc-400">
+                <span className="flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-zinc-500" /> Registrado como:
+                </span>
+                <span className="text-white font-medium">{submittedNickname}</span>
+              </div>
+            )}
+
+            {/* TABLA DEL TOP 10 DIARIO */}
+            <div className="space-y-3 border-t border-zinc-900 pt-5">
+              <div className="flex justify-between items-center text-xs font-mono">
+                <span className="uppercase tracking-widest text-zinc-500">Top 10 de Hoy</span>
+                {isLoadingLeaderboard && (
+                  <span className="text-[10px] text-zinc-600 animate-pulse">Actualizando...</span>
+                )}
+              </div>
+
+              <div className="border border-zinc-900 rounded-xl overflow-hidden bg-zinc-950/30 divide-y divide-zinc-900/60 font-mono text-xs">
+                {leaderboard.length === 0 ? (
+                  <p className="p-4 text-center text-zinc-600 text-[11px]">
+                    Sé el primero en entrar al ranking de hoy.
+                  </p>
+                ) : (
+                  leaderboard.map((entry, index) => {
+                    const isPodium = index < 3;
+                    const isCurrentUser = submittedNickname && entry.nickname === submittedNickname;
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`flex items-center justify-between px-3.5 py-2.5 transition ${
+                          isCurrentUser ? "bg-zinc-900/50 text-white" : "text-zinc-400"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`w-4 text-center font-semibold text-[11px] ${
+                            index === 0
+                              ? "text-amber-400"
+                              : index === 1
+                              ? "text-zinc-300"
+                              : index === 2
+                              ? "text-amber-700"
+                              : "text-zinc-600"
+                          }`}>
+                            {index + 1}
+                          </span>
+                          <span className={`truncate max-w-[150px] ${isPodium ? "text-zinc-200" : ""}`}>
+                            {entry.nickname}
+                          </span>
+                        </div>
+                        <span className="text-right text-zinc-300 font-semibold tabular-nums">
+                          {entry.score} <span className="text-[10px] text-zinc-600 font-normal">pts</span>
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
             {/* Desglose de cada fase */}
             <div className="space-y-2 border-t border-zinc-900 pt-4">
               <p className="font-mono text-[11px] uppercase tracking-widest text-zinc-500 mb-3">
-                Fases del Embudo
+                Desglose de tus respuestas
               </p>
               {results.map((r, i) => {
                 const isSpecial = r.success && r.rarity <= 20;
